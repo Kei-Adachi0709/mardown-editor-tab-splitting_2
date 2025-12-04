@@ -127,22 +127,6 @@ input[type="number"]::-webkit-outer-spin-button {
     margin-right: 0;
 }
 
-/* ...既存コード... */
-
-/* 右ペイン内のエディタコンテナ用 */
-#right-markdown-container {
-    flex: 1;
-    overflow: hidden;
-    background-color: var(--main-bg);
-    min-height: 0;
-}
-
-#right-markdown-container.hidden {
-    display: none !important;
-}
-
-/* ...既存コード... */
-
 /* ========== Top Bar ========== */
 .top-bar {
     display: flex;
@@ -304,8 +288,7 @@ body[data-theme="dark"] .window-control-btn:not(.close):hover {
     flex-direction: column;
     align-items: center;
     transition: width 0.2s ease;
-    z-index: 2147483647 !important; /* オーバーレイ(z-index:9999)より確実に上にする */
-    position: relative; /* z-indexを効かせるために必要 */
+    z-index: 5;
 }
 
 .right-activity-bar.hidden {
@@ -969,7 +952,6 @@ body[data-theme="dark"] .editor-tab .close-tab:hover {
     height: 100%;
     pointer-events: none;
     z-index: 1000;
-    pointer-events: none !important; /* クリックを透過させる */
 }
 
 .drop-overlay.hidden {
@@ -1995,51 +1977,4 @@ body[data-theme="dark"] .cm-bookmark-cover {
 
 body[data-theme="dark"] .skeleton-box {
     background-color: #374151;
-}
-
-/* styles.css の末尾に追加 */
-
-.drop-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    pointer-events: none; /* ★重要: これがないとドロップできません */
-    z-index: 9999;
-    background-color: rgba(0, 122, 204, 0.3); /* 半透明の青 */
-    display: block;
-}
-
-.drop-overlay.hidden {
-    display: none;
-}
-
-/* styles.css の一番下に追加 */
-
-/* ドラッグ用の幕（クリックを透過させる） */
-.drop-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none !important; /* ★ここが最重要 */
-    z-index: 9999;
-    background-color: transparent; /* デバッグのため一旦透明に戻す */
-    display: none;
-}
-
-/* 幕が表示されるとき */
-.drop-overlay:not(.hidden) {
-    display: block;
-}
-
-/* 右サイドバーを「幕」よりさらに手前に持ってくる */
-.right-activity-bar {
-    z-index: 2147483647 !important; /* CSSで設定できる最大値 */
-    pointer-events: auto !important;
-}
-
-/* 左サイドバーも念のため手前に */
-.activity-bar {
-    z-index: 2147483647 !important;
 }
