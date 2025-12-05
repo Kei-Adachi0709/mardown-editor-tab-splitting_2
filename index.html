@@ -5,7 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Markdown IDE</title>
+    <!-- styles.css が index.html と同じ階層にある場合 -->
     <link rel="stylesheet" href="styles.css">
+    
+    <!-- node_modules が index.html と同じ階層にある場合 -->
     <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css" />
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="node_modules/katex/dist/katex.min.css" />
@@ -25,7 +28,7 @@
                     <button class="side-switch" data-target="outline" id="btn-top-outline" title="アウトライン">📑</button>
                 </div>
             </div>
-            <!-- タブコンテナは各ペイン内に移動したため削除 -->
+            
             <div class="spacer" style="flex: 1;"></div>
             
             <div class="top-right-controls">
@@ -326,7 +329,7 @@
     <!-- ★追加: 通知用コンテナ -->
     <div id="notification-container" class="notification-container"></div>
 
-    <!-- ライブラリ読み込み（既存のものを維持） -->
+    <!-- Scripts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
@@ -337,37 +340,9 @@
     <script src="node_modules/katex/dist/contrib/auto-render.min.js"></script>
     <script src="node_modules/mermaid/dist/mermaid.min.js"></script>
     <script src="node_modules/marked/lib/marked.umd.js"></script>
-
-    <!-- ★ここから下を書き換え（renderer.jsを消して、モジュール群を追加） -->
     
-    <!-- 0. エラー表示用スクリプト（真っ白画面対策） -->
-    <script>
-        window.onerror = function(message, source, lineno, colno, error) {
-            const overlay = document.createElement('div');
-            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(50,0,0,0.95);color:#ffcccc;z-index:99999;padding:20px;overflow:auto;font-family:monospace;white-space:pre-wrap;font-size:14px;';
-            overlay.innerHTML = `<h1>Critical Error</h1><h3>${message}</h3><p>${source}:${lineno}:${colno}</p><pre>${error ? error.stack : ''}</pre>`;
-            document.body.appendChild(overlay);
-        };
-        // 名前空間の初期化
-        window.App = window.App || {};
-    </script>
-
-    <!-- 1. 共通モジュール -->
-    <script src="./modules/state.js"></script>
-    <script src="./modules/ui-components.js"></script>
-    <script src="./modules/editor-utils.js"></script>
-
-    <!-- 2. 機能モジュール -->
-    <script src="./modules/pdf-preview.js"></script>
-    <script src="./modules/terminal-manager.js"></script>
-    <script src="./modules/file-explorer.js"></script>
-
-    <!-- 3. エディタ・レイアウト -->
-    <script src="./modules/editor-pane.js"></script>
-    <script src="./modules/layout-manager.js"></script>
-
-    <!-- 4. メインロジック -->
-    <script src="./app.js"></script>
+    <!-- ここを変更: srcフォルダを参照し、type="module"を追加 -->
+    <script type="module" src="./src/renderer.js"></script>
 </body>
 
 </html>
