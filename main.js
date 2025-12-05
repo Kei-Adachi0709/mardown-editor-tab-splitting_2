@@ -234,8 +234,9 @@ function createWindow() {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
+        // ★修正箇所: script-src に https://esm.sh を追加
         'Content-Security-Policy': [
-          "default-src 'self'; img-src 'self' https: data:; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:;"
+          "default-src 'self'; img-src 'self' https: data:; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://esm.sh; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:;"
         ]
       }
     })
