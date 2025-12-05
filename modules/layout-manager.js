@@ -1,160 +1,77 @@
-const { Pane } = require('./editor-pane');
-const state = require('./state');
+console.log('[Module] Layout Manager loading...');
+window.App = window.App || {};
 
 class LayoutManager {
-    constructor(rootContainerId, callbacks) {
+    constructor(rootId, callbacks) {
+        this.rootContainer = document.getElementById(rootId);
+        this.callbacks = callbacks;
         this.panes = new Map();
-        this.activePaneId = null;
         this.paneCounter = 0;
-        this.rootContainer = document.getElementById(rootContainerId);
-        this.callbacks = callbacks || {};
-        this.dragSource = null;
+        this.activePaneId = null;
     }
 
     init() {
+        if (!this.rootContainer) {
+            console.error('Root container not found');
+            return;
+        }
         this.rootContainer.innerHTML = '';
         this.panes.clear();
+        
+        // 初期ペイン
         const id = this.createPane(this.rootContainer);
         this.setActivePane(id);
-        this.setupDragDrop();
     }
 
     createPane(container) {
         const id = `pane-${++this.paneCounter}`;
-        const pane = new Pane(id, container, this, this.callbacks);
+        // window.App.Pane を使用
+        const pane = new window.App.Pane(id, container, this, this.callbacks);
         this.panes.set(id, pane);
         return id;
     }
 
-    removePane(paneId) {
-        const pane = this.panes.get(paneId);
-        if (!pane) return;
-        if (pane.element.parentNode === this.rootContainer) {
-            if (pane.files.length === 0) pane.setEditorContent("");
-            return;
-        }
-        const parentSplit = pane.element.parentNode;
-        const grandParent = parentSplit.parentNode;
-        const sibling = Array.from(parentSplit.children).find(el => el !== pane.element);
-        
-        grandParent.replaceChild(sibling, parentSplit);
-        sibling.style.flex = '1';
-        
-        pane.destroy();
-        this.panes.delete(paneId);
-        if (this.activePaneId === paneId) this.activateNearestPane(sibling);
-    }
-
-    activateNearestPane(element) {
-        const firstPane = element.classList.contains('pane') ? element : element.querySelector('.pane');
-        if (firstPane) this.setActivePane(firstPane.dataset.id);
-    }
-
     setActivePane(id) {
-        if (this.activePaneId) {
-            const prev = this.panes.get(this.activePaneId);
-            if (prev) prev.element.classList.remove('active');
-        }
+        if (this.activePaneId === id) return; // 変更なしなら無視
+
+        const prev = this.panes.get(this.activePaneId);
+        if (prev) prev.element.classList.remove('active');
+
         this.activePaneId = id;
         const next = this.panes.get(id);
         if (next) {
             next.element.classList.add('active');
-            if (this.callbacks.onActivePaneChanged) this.callbacks.onActivePaneChanged(next);
-        }
-    }
-
-    get activePane() { return this.panes.get(this.activePaneId); }
-
-    setDragSource(paneId, filePath) { this.dragSource = { paneId, filePath }; }
-
-    splitPane(targetId, direction) {
-        const target = this.panes.get(targetId);
-        if (!target) return;
-        
-        const parent = target.element.parentNode;
-        const split = document.createElement('div');
-        split.className = `split-container ${['left','right'].includes(direction) ? 'horizontal' : 'vertical'}`;
-        split.style.flex = '1';
-        
-        parent.replaceChild(split, target.element);
-        const newId = this.createPane(split);
-        const newPane = this.panes.get(newId);
-        
-        target.element.style.flex = '1';
-        newPane.element.style.flex = '1';
-
-        if (['left','top'].includes(direction)) {
-            split.appendChild(newPane.element);
-            split.appendChild(target.element);
-        } else {
-            split.appendChild(target.element);
-            split.appendChild(newPane.element);
-        }
-        return newId;
-    }
-
-    setupDragDrop() {
-        const overlay = document.getElementById('drop-overlay');
-        const indicator = document.getElementById('drop-indicator');
-        const area = document.getElementById('content-readme'); // エディタエリア全体
-
-        area.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            if (!this.dragSource) return;
             
-            const rect = area.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            const w = rect.width, h = rect.height;
-            
-            let zone = 'center';
-            if (x < w * 0.2) zone = 'left';
-            else if (x > w * 0.8) zone = 'right';
-            else if (y < h * 0.2) zone = 'top';
-            else if (y > h * 0.8) zone = 'bottom';
-
-            overlay.classList.remove('hidden');
-            indicator.style.top = indicator.style.left = '0';
-            indicator.style.width = indicator.style.height = '100%';
-            
-            if (zone === 'left') indicator.style.width = '50%';
-            else if (zone === 'right') { indicator.style.left = '50%'; indicator.style.width = '50%'; }
-            else if (zone === 'top') indicator.style.height = '50%';
-            else if (zone === 'bottom') { indicator.style.top = '50%'; indicator.style.height = '50%'; }
-            
-            this.currentDropZone = zone;
-        });
-
-        area.addEventListener('dragleave', (e) => {
-            if (e.target === overlay) overlay.classList.add('hidden');
-        });
-
-        area.addEventListener('drop', (e) => {
-            e.preventDefault();
-            overlay.classList.add('hidden');
-            if (!this.dragSource) return;
-
-            const zone = this.currentDropZone;
-            const targetId = this.activePaneId; // 簡易的にアクティブペインをターゲットとする
-            
-            if (zone === 'center') {
-                if (targetId !== this.dragSource.paneId) {
-                    this.panes.get(targetId).openFile(this.dragSource.filePath);
-                    this.panes.get(this.dragSource.paneId).closeFile(this.dragSource.filePath, true);
-                    this.setActivePane(targetId);
-                }
-            } else {
-                const newId = this.splitPane(targetId, zone);
-                this.panes.get(newId).openFile(this.dragSource.filePath);
-                this.panes.get(this.dragSource.paneId).closeFile(this.dragSource.filePath, true);
-                this.setActivePane(newId);
+            // コールバック呼び出し
+            if (this.callbacks.onActivePaneChanged) {
+                this.callbacks.onActivePaneChanged(next);
             }
-            this.dragSource = null;
-        });
+        }
     }
 
+    get activePane() {
+        return this.panes.get(this.activePaneId);
+    }
+
+    removePane(paneId) {
+        // 簡易実装: 最後の1つは消さない
+        if (this.panes.size <= 1) return;
+        
+        const pane = this.panes.get(paneId);
+        if (pane) {
+            pane.destroy();
+            this.panes.delete(paneId);
+            // 別のペインをアクティブに
+            if (this.activePaneId === paneId) {
+                const nextId = this.panes.keys().next().value;
+                this.setActivePane(nextId);
+            }
+        }
+    }
+    
     updateAllPaneSettings() {
         this.panes.forEach(p => p.updateSettings());
     }
 }
-module.exports = { LayoutManager };
+
+window.App.LayoutManager = LayoutManager;

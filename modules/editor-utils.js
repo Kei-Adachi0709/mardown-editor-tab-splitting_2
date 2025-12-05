@@ -1,173 +1,132 @@
-const { undo, redo, indentMore, indentLess } = require("@codemirror/commands");
+(() => {
+    console.log('[Module] Editor Utils loading...');
+    const { undo, redo } = require("@codemirror/commands");
 
-module.exports = {
-    undo, redo,
+    window.App = window.App || {};
 
-    toggleMark(view, mark) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const { from, to, empty } = state.selection.main;
-        const selectedText = state.sliceDoc(from, to);
-        const extendedFrom = Math.max(0, from - mark.length);
-        const extendedTo = Math.min(state.doc.length, to + mark.length);
+    window.App.EditorUtils = {
+        undo,
+        redo,
 
-        if (extendedFrom >= 0 && extendedTo <= state.doc.length) {
-            const surroundingText = state.sliceDoc(extendedFrom, extendedTo);
-            if (surroundingText.startsWith(mark) && surroundingText.endsWith(mark)) {
+        toggleMark(view, mark) {
+            if (!view) return;
+            const { state, dispatch } = view;
+            const { from, to, empty } = state.selection.main;
+            const selectedText = state.sliceDoc(from, to);
+            
+            // 簡易的なトグル実装
+            const around = state.sliceDoc(from - mark.length, to + mark.length);
+            if (around.startsWith(mark) && around.endsWith(mark)) {
                 dispatch({
-                    changes: { from: extendedFrom, to: extendedTo, insert: selectedText },
-                    selection: { anchor: extendedFrom, head: extendedFrom + selectedText.length }
+                    changes: { from: from - mark.length, to: to + mark.length, insert: selectedText },
+                    selection: { anchor: from - mark.length, head: to - mark.length }
                 });
-                view.focus(); return;
-            }
-        }
-
-        dispatch({
-            changes: { from: from, to: to, insert: `${mark}${selectedText}${mark}` },
-            selection: empty
-                ? { anchor: from + mark.length, head: from + mark.length }
-                : { anchor: to + mark.length * 2, head: to + mark.length * 2 }
-        });
-        view.focus();
-    },
-
-    toggleLinePrefix(view, prefix) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const { from } = state.selection.main;
-        const line = state.doc.lineAt(from);
-        const match = line.text.match(/^\s*(#+\s*|>\s*)/);
-
-        let changes;
-        let newCursorPos;
-
-        if (match && match[1].trim() === prefix.trim()) {
-            const matchLen = match[0].length;
-            changes = { from: line.from, to: line.from + matchLen, insert: "" };
-            newCursorPos = line.to - matchLen;
-        } else {
-            const insertText = prefix.endsWith(' ') ? prefix : prefix + ' ';
-            if (match) {
-                const matchLen = match[0].length;
-                changes = { from: line.from, to: line.from + matchLen, insert: insertText };
-                newCursorPos = line.to - matchLen + insertText.length;
             } else {
-                changes = { from: line.from, to: line.from, insert: insertText };
-                newCursorPos = line.to + insertText.length;
+                dispatch({
+                    changes: { from, to, insert: `${mark}${selectedText}${mark}` },
+                    selection: { anchor: from + mark.length, head: to + mark.length }
+                });
             }
-        }
+            view.focus();
+        },
 
-        dispatch({
-            changes: changes,
-            selection: { anchor: newCursorPos, head: newCursorPos }
-        });
-        view.focus();
-    },
-
-    toggleList(view, type) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const { from, to } = state.selection.main;
-        const startLine = state.doc.lineAt(from);
-        const endLine = state.doc.lineAt(to);
-        let changes = [];
-        let totalChangeLength = 0;
-
-        for (let i = startLine.number; i <= endLine.number; i++) {
-            const line = state.doc.line(i);
+        toggleLinePrefix(view, prefix) {
+            if (!view) return;
+            const { state, dispatch } = view;
+            const line = state.doc.lineAt(state.selection.main.from);
             const text = line.text;
-            const bulletMatch = text.match(/^(\s*)([-*+] )\s*/);
-            const orderedMatch = text.match(/^(\s*)(\d+(?:-\d+)*\. )\s*/);
-            const checkMatch = text.match(/^(\s*)(- \[[ x]\] )\s*/);
-
-            let diff = 0;
-
-            if (type === 'ul') {
-                if (bulletMatch) {
-                    const delLen = bulletMatch[0].length - bulletMatch[1].length;
-                    changes.push({ from: line.from + bulletMatch[1].length, to: line.from + bulletMatch[0].length, insert: "" });
-                    diff = -delLen;
-                } else {
-                    changes.push({ from: line.from, insert: "- " });
-                    diff = 2;
-                }
-            } else if (type === 'ol') {
-                if (orderedMatch) {
-                    const delLen = orderedMatch[0].length - orderedMatch[1].length;
-                    changes.push({ from: line.from + orderedMatch[1].length, to: line.from + orderedMatch[0].length, insert: "" });
-                    diff = -delLen;
-                } else {
-                    changes.push({ from: line.from, insert: "1. " });
-                    diff = 3;
-                }
-            } else if (type === 'task') {
-                if (checkMatch) {
-                    const delLen = checkMatch[0].length - checkMatch[1].length;
-                    changes.push({ from: line.from + checkMatch[1].length, to: line.from + checkMatch[0].length, insert: "" });
-                    diff = -delLen;
-                } else {
-                    changes.push({ from: line.from, insert: "- [ ] " });
-                    diff = 6;
-                }
+            
+            let changes;
+            const cleanPrefix = prefix.trim();
+            const regex = new RegExp(`^${cleanPrefix}\\s?`);
+            
+            if (regex.test(text)) {
+                const match = text.match(regex);
+                changes = { from: line.from, to: line.from + match[0].length, insert: '' };
+            } else {
+                changes = { from: line.from, insert: prefix + ' ' };
             }
-            totalChangeLength += diff;
+            dispatch({ changes });
+            view.focus();
+        },
+
+        toggleList(view, type) {
+            if (!view) return;
+            const { state, dispatch } = view;
+            const line = state.doc.lineAt(state.selection.main.from);
+            const text = line.text;
+            
+            let prefix = '';
+            let regex = null;
+
+            if (type === 'ul') { prefix = '- '; regex = /^-\s/; }
+            else if (type === 'ol') { prefix = '1. '; regex = /^\d+\.\s/; }
+            else if (type === 'task') { prefix = '- [ ] '; regex = /^-\s\[[ x]\]\s/; }
+
+            let changes;
+            if (regex && regex.test(text)) {
+                const match = text.match(regex);
+                changes = { from: line.from, to: line.from + match[0].length, insert: '' };
+            } else {
+                changes = { from: line.from, insert: prefix };
+            }
+            dispatch({ changes });
+            view.focus();
+        },
+
+        insertLink(view) {
+            if (!view) return;
+            const { from, to } = view.state.selection.main;
+            const text = view.state.sliceDoc(from, to) || 'link';
+            view.dispatch({
+                changes: { from, to, insert: `[${text}](url)` },
+                selection: { anchor: from + text.length + 3, head: from + text.length + 6 }
+            });
+            view.focus();
+        },
+
+        insertImage(view) {
+            if (!view) return;
+            view.dispatch({
+                changes: { from: view.state.selection.main.from, insert: '![Image](url)' },
+                selection: { anchor: view.state.selection.main.from + 9, head: view.state.selection.main.from + 12 }
+            });
+            view.focus();
+        },
+
+        insertTable(view) {
+            if (!view) return;
+            const table = `
+| Col 1 | Col 2 | Col 3 |
+| :--- | :--- | :--- |
+|  |  |  |
+|  |  |  |
+`;
+            view.dispatch({ changes: { from: view.state.selection.main.from, insert: table.trim() } });
+            view.focus();
+        },
+
+        insertCodeBlock(view) {
+            if (!view) return;
+            const { from, to } = view.state.selection.main;
+            const text = view.state.sliceDoc(from, to);
+            const insert = `\`\`\`\n${text}\n\`\`\`\n`;
+            view.dispatch({ changes: { from, to, insert } });
+            view.focus();
+        },
+
+        insertHorizontalRule(view) {
+            if (!view) return;
+            const line = view.state.doc.lineAt(view.state.selection.main.from);
+            view.dispatch({ changes: { from: line.to, insert: '\n---\n' } });
+            view.focus();
+        },
+        
+        insertPageBreak(view) {
+            if (!view) return;
+            const line = view.state.doc.lineAt(view.state.selection.main.from);
+            view.dispatch({ changes: { from: line.to, insert: '\n<div class="page-break"></div>\n' } });
+            view.focus();
         }
-
-        const newHead = endLine.to + totalChangeLength;
-        dispatch({ changes, selection: { anchor: newHead, head: newHead } });
-        view.focus();
-    },
-
-    insertLink(view) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const { from, to } = state.selection.main;
-        const selectedText = state.sliceDoc(from, to) || "link";
-        dispatch({ changes: { from, to, insert: `[${selectedText}](url)` }, selection: { anchor: from + selectedText.length + 3, head: from + selectedText.length + 6 } });
-        view.focus();
-    },
-
-    insertImage(view) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const { from, to } = state.selection.main;
-        const selectedText = state.sliceDoc(from, to) || "Image";
-        dispatch({ changes: { from, to, insert: `![${selectedText}](url)` }, selection: { anchor: from + 4 + selectedText.length + 2, head: from + 4 + selectedText.length + 5 } });
-        view.focus();
-    },
-
-    insertCodeBlock(view) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const { from, to } = state.selection.main;
-        const selectedText = state.sliceDoc(from, to);
-        const insert = `\`\`\`\n${selectedText}\n\`\`\`\n`;
-        dispatch({ changes: { from, to, insert }, selection: { anchor: from + 4 } });
-        view.focus();
-    },
-
-    insertHorizontalRule(view) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const line = state.doc.lineAt(state.selection.main.from);
-        dispatch({ changes: { from: line.to, insert: `\n---\n` } });
-        view.focus();
-    },
-
-    insertPageBreak(view) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const line = state.doc.lineAt(state.selection.main.from);
-        dispatch({ changes: { from: line.to, insert: `\n<div class="page-break"></div>\n` } });
-        view.focus();
-    },
-
-    insertTable(view) {
-        if (!view) return;
-        const { state, dispatch } = view;
-        const { from } = state.selection.main;
-        const table = `| Col 1 | Col 2 | Col 3 |\n| :--- | :--- | :--- |\n|  |  |  |\n|  |  |  |\n`;
-        dispatch({ changes: { from, insert: table } });
-        view.focus();
-    }
-};
+    };
+})();

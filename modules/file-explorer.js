@@ -1,147 +1,124 @@
-const path = require('path');
-const state = require('./state');
-const { showContextMenu, showModalConfirm, showNotification } = require('./ui-components');
+(() => {
+    console.log('[Module] File Explorer loading...');
+    const path = require('path');
+    
+    window.App = window.App || {};
 
-class FileExplorer {
-    constructor(layoutManager) {
-        this.layoutManager = layoutManager;
-        this.container = document.getElementById('file-tree-container');
-        if (this.container) {
-            this.setupEvents();
-            this.initTree();
+    class FileExplorer {
+        constructor(layoutManager) {
+            this.layoutManager = layoutManager;
+            this.container = document.getElementById('file-tree-container');
+            if (this.container) this.initTree();
         }
-    }
 
-    async initTree() {
-        try {
-            state.currentDirectoryPath = await window.electronAPI.getCurrentDirectory() || '.';
-            const root = this.container.querySelector('.tree-item.expanded');
-            if (root) {
-                root.dataset.path = state.currentDirectoryPath;
-                root.querySelector('.tree-label').textContent = path.basename(state.currentDirectoryPath);
-                await this.loadDir(root, state.currentDirectoryPath);
+        async initTree() {
+            try {
+                const dir = await window.electronAPI.getCurrentDirectory() || '.';
+                window.App.State.currentDirectoryPath = dir;
+                
+                // ルート要素作成
+                this.container.innerHTML = '';
+                const root = document.createElement('div');
+                root.className = 'tree-item expanded';
+                root.dataset.path = dir;
+                root.innerHTML = `<span class="tree-toggle">▼</span><span class="tree-icon">📂</span><span class="tree-label">${path.basename(dir)}</span>`;
+                this.container.appendChild(root);
+
+                // ルートの子要素コンテナ
+                const children = document.createElement('div');
+                children.className = 'tree-children';
+                children.style.display = 'block';
+                this.container.appendChild(children);
+
+                await this.loadDir(children, dir);
+                this.setupEvents();
+
+            } catch (e) {
+                console.error('File Tree Init Error:', e);
             }
-        } catch (e) { console.error(e); }
-    }
+        }
 
-    setupEvents() {
-        this.container.addEventListener('click', (e) => {
-            const item = e.target.closest('.tree-item');
-            if (!item || item.classList.contains('creation-mode')) return;
-            e.stopPropagation();
+        async loadDir(container, dirPath) {
+            container.innerHTML = '';
+            const items = await window.electronAPI.readDirectory(dirPath);
             
-            this.container.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
-            item.classList.add('selected');
-
-            if (item.classList.contains('file')) {
-                this.openFile(item.dataset.path, item.dataset.name);
-            } else {
-                this.toggleDir(item);
-            }
-        });
-
-        this.container.addEventListener('contextmenu', (e) => {
-            const item = e.target.closest('.tree-item');
-            if(!item) return;
-            e.preventDefault();
-            this.container.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
-            item.classList.add('selected');
-            showContextMenu(e.pageX, e.pageY, item.dataset.path, item.dataset.name, {
-                onRename: () => this.rename(item),
-                onDelete: () => showModalConfirm(item.dataset.name, () => this.delete(item.dataset.path))
+            // フォルダ優先ソート
+            items.sort((a, b) => {
+                if (a.isDirectory !== b.isDirectory) return b.isDirectory ? 1 : -1;
+                return a.name.localeCompare(b.name);
             });
-        });
-    }
 
-    async loadDir(folderElem, dirPath) {
-        let childContainer = folderElem.nextElementSibling;
-        if (!childContainer || !childContainer.classList.contains('tree-children')) {
-            childContainer = document.createElement('div');
-            childContainer.className = 'tree-children';
-            folderElem.parentNode.insertBefore(childContainer, folderElem.nextSibling);
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.className = `tree-item ${item.isDirectory ? '' : 'file'}`;
+                const fullPath = path.join(dirPath, item.name);
+                div.dataset.path = fullPath;
+                div.dataset.name = item.name;
+                
+                div.innerHTML = item.isDirectory 
+                    ? `<span class="tree-toggle">▶</span><span class="tree-icon">📁</span><span class="tree-label">${item.name}</span>`
+                    : `<span class="tree-icon">📄</span><span class="tree-label">${item.name}</span>`;
+                
+                container.appendChild(div);
+            });
         }
-        childContainer.innerHTML = '';
-        
-        const items = await window.electronAPI.readDirectory(dirPath);
-        items.sort((a,b) => {
-            if(a.isDirectory !== b.isDirectory) return b.isDirectory ? 1 : -1;
-            return a.name.localeCompare(b.name);
-        });
 
-        items.forEach(item => {
-            childContainer.appendChild(this.createItem(item, dirPath));
-        });
-        childContainer.style.display = 'block';
-    }
+        setupEvents() {
+            this.container.addEventListener('click', async (e) => {
+                const item = e.target.closest('.tree-item');
+                if (!item) return;
+                e.stopPropagation();
 
-    createItem(item, parentPath) {
-        const fullPath = path.join(parentPath, item.name);
-        const div = document.createElement('div');
-        div.className = `tree-item ${item.isDirectory ? '' : 'file'}`;
-        div.dataset.path = fullPath;
-        div.dataset.name = item.name;
-        
-        let html = '';
-        if(item.isDirectory) html += `<span class="tree-toggle">▶</span><span class="tree-icon">📁</span>`;
-        else html += `<span class="tree-icon">📄</span>`;
-        html += `<span class="tree-label">${item.name}</span>`;
-        
-        div.innerHTML = html;
-        return div;
-    }
+                // 選択状態更新
+                this.container.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
+                item.classList.add('selected');
 
-    async toggleDir(elem) {
-        const toggle = elem.querySelector('.tree-toggle');
-        if(!toggle) return;
-        const isExpanded = toggle.textContent === '▼';
-        const children = elem.nextElementSibling;
-        
-        if (isExpanded) {
-            toggle.textContent = '▶';
-            if(children) children.style.display = 'none';
-        } else {
-            toggle.textContent = '▼';
-            await this.loadDir(elem, elem.dataset.path);
+                const filePath = item.dataset.path;
+                
+                if (item.classList.contains('file')) {
+                    // ファイルを開く
+                    await this.openFile(filePath, item.dataset.name);
+                } else {
+                    // フォルダ開閉
+                    const toggle = item.querySelector('.tree-toggle');
+                    const next = item.nextElementSibling;
+                    
+                    if (toggle && toggle.textContent === '▶') {
+                        toggle.textContent = '▼';
+                        // 子コンテナがなければ作成
+                        let childrenContainer = next;
+                        if (!childrenContainer || !childrenContainer.classList.contains('tree-children')) {
+                            childrenContainer = document.createElement('div');
+                            childrenContainer.className = 'tree-children';
+                            item.parentNode.insertBefore(childrenContainer, item.nextSibling);
+                        }
+                        childrenContainer.style.display = 'block';
+                        await this.loadDir(childrenContainer, filePath);
+                    } else if (toggle) {
+                        toggle.textContent = '▶';
+                        if (next && next.classList.contains('tree-children')) {
+                            next.style.display = 'none';
+                        }
+                    }
+                }
+            });
+        }
+
+        async openFile(filePath, fileName) {
+            try {
+                if (!window.App.State.openedFiles.has(filePath)) {
+                    const content = await window.electronAPI.loadFile(filePath);
+                    window.App.State.openedFiles.set(filePath, { content, fileName });
+                }
+                if (this.layoutManager && this.layoutManager.activePane) {
+                    this.layoutManager.activePane.openFile(filePath);
+                }
+            } catch (e) {
+                console.error('Open file error:', e);
+                window.App.UI.showNotification('ファイルを開けませんでした', 'error');
+            }
         }
     }
 
-    async openFile(filePath, fileName) {
-        try {
-            if (!state.openedFiles.has(filePath)) {
-                const content = await window.electronAPI.loadFile(filePath);
-                state.openedFiles.set(filePath, { content, fileName });
-            }
-            this.layoutManager.activePane.openFile(filePath);
-        } catch (e) { showNotification('開けませんでした', 'error'); }
-    }
-
-    rename(item) {
-        // Simple rename impl
-        const nameSpan = item.querySelector('.tree-label');
-        const oldName = item.dataset.name;
-        nameSpan.style.display = 'none';
-        const input = document.createElement('input');
-        input.value = oldName;
-        input.className = 'rename-input';
-        item.appendChild(input);
-        input.focus();
-        
-        const finish = async () => {
-            const newName = input.value.trim();
-            if(newName && newName !== oldName) {
-                await window.electronAPI.renameFile(item.dataset.path, newName);
-                this.initTree(); // Reload
-            }
-            input.remove();
-            nameSpan.style.display = '';
-        };
-        input.addEventListener('blur', finish);
-        input.addEventListener('keydown', e => { if(e.key==='Enter') finish(); });
-    }
-
-    async delete(path) {
-        await window.electronAPI.deleteFile(path);
-        this.initTree();
-    }
-}
-module.exports = { FileExplorer };
+    window.App.FileExplorer = FileExplorer;
+})();

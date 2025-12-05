@@ -1,467 +1,262 @@
-/**
- * app.js - Refactored Entry Point
- */
+console.log('[App] Starting...');
 
-// --- Error Handling for Debugging ---
-window.addEventListener('error', (event) => {
-    const errorMsg = event.error ? event.error.stack : event.message;
-    console.error('Global Error Caught:', errorMsg);
-    // エラー発生時に画面にオーバーレイを表示（開発用）
-    showErrorOverlay(`Critical Error: ${event.message}\n\n${errorMsg}`);
-});
-
-function showErrorOverlay(message) {
-    let overlay = document.getElementById('critical-error-overlay');
-    if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'critical-error-overlay';
-        overlay.style.cssText = `position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(50, 0, 0, 0.9); color: #ffcccc; z-index: 99999; padding: 20px; overflow: auto; font-family: monospace; white-space: pre-wrap; font-size: 14px;`;
-        document.body.appendChild(overlay);
-    }
-    overlay.textContent += '\n--------------------------\n' + message;
-}
-
-console.log('[App] Starting initialization...');
-
-// --- Module Loading ---
-const path = require('path');
-
-function safeRequire(modulePath) {
-    try {
-        console.log(`[App] Loading module: ${modulePath}`);
-        return require(path.join(__dirname, modulePath));
-    } catch (e) {
-        console.error(`[App] Failed to load module: ${modulePath}`, e);
-        throw e;
-    }
-}
-
-// Import Modules
-const state = safeRequire('./modules/state');
-const uiComponents = safeRequire('./modules/ui-components');
-const { LayoutManager } = safeRequire('./modules/layout-manager');
-const { FileExplorer } = safeRequire('./modules/file-explorer');
-const { TerminalManager } = safeRequire('./modules/terminal-manager');
-const pdfPreview = safeRequire('./modules/pdf-preview');
-const EditorUtils = safeRequire('./modules/editor-utils'); // 新規作成: 編集ヘルパー
-
-// Instances
-let layoutManager;
-let fileExplorer;
-let terminalManager;
-
-// --- Initialization ---
 window.addEventListener('load', async () => {
-    console.log('[App] Window Loaded');
+    console.log('[App] Window loaded. Initializing...');
+
     try {
-        // 1. Layout Manager
-        layoutManager = new LayoutManager('pane-root', {
-            onActivePaneChanged: (pane) => updateUIForActivePane(pane),
-            onEditorInput: (isDirty) => handleEditorInput(isDirty),
-            onSave: () => saveCurrentFile()
+        // 必須モジュールのチェック
+        if (!window.App || !window.App.LayoutManager || !window.App.FileExplorer) {
+            throw new Error('Required modules are missing. Check script tags in index.html');
+        }
+
+        // 短く書けるようにエイリアスを作成
+        const { LayoutManager, FileExplorer, TerminalManager, State, UI, EditorUtils, PdfPreview } = window.App;
+
+        // --- 1. レイアウトマネージャー初期化 ---
+        const layoutManager = new LayoutManager('pane-root', {
+            // アクティブなペインが切り替わった時の処理
+            onActivePaneChanged: (pane) => {
+                const titleInput = document.getElementById('file-title-input');
+                const titleBar = document.getElementById('file-title-bar');
+                const stats = document.getElementById('file-stats');
+
+                if (pane && pane.activeFilePath) {
+                    const fileData = State.openedFiles.get(pane.activeFilePath);
+                    if (titleInput) titleInput.value = fileData ? fileData.fileName : '';
+                    if (titleBar) titleBar.classList.remove('hidden');
+                    if (stats) stats.textContent = `行数: ${pane.editorView.state.doc.lines}`;
+                    
+                    // PDFプレビュー更新
+                    if (State.isPdfPreviewVisible) {
+                        PdfPreview.generatePdfPreview(pane.editorView.state.doc.toString());
+                    }
+                } else {
+                    if (titleBar) titleBar.classList.add('hidden');
+                    if (titleInput) titleInput.value = '';
+                    if (stats) stats.textContent = '';
+                }
+            },
+            // エディタに入力があった時の処理
+            onEditorInput: (isDirty) => {
+                const pane = layoutManager.activePane;
+                if (pane && State.isPdfPreviewVisible) {
+                    // 入力中は少し待ってからPDF更新 (Debounce)
+                    if (State.timeouts.pdfUpdate) clearTimeout(State.timeouts.pdfUpdate);
+                    State.timeouts.pdfUpdate = setTimeout(() => {
+                        PdfPreview.generatePdfPreview(pane.editorView.state.doc.toString());
+                    }, 800);
+                }
+            },
+            // Ctrl+S で保存された時の処理
+            onSave: () => saveFile()
         });
+        
         layoutManager.init();
 
-        // 2. File Explorer
-        fileExplorer = new FileExplorer(layoutManager);
+        // --- 2. ファイルエクスプローラー初期化 ---
+        const fileExplorer = new FileExplorer(layoutManager);
 
-        // 3. Terminal Manager
-        terminalManager = new TerminalManager();
-        if (state.isTerminalVisible) {
-            await terminalManager.init();
-            terminalManager.createSession();
-        }
+        // --- 3. ターミナル初期化 ---
+        const terminalManager = new TerminalManager();
+        await terminalManager.init(); // 初期設定読み込み
 
-        // 4. Settings & UI
-        await loadSettings();
-        applySettingsToUI();
-        setupGlobalEventListeners();
-        setupSidebarEvents();
-        setupToolbarEvents(); // ツールバーイベントの設定
-        setupOutlineEvents(); // アウトラインイベントの設定
-
-        // 5. Initial File
-        openWelcomeFile();
-
-        // 6. PDF Lib Preload
-        setTimeout(() => pdfPreview.loadPdfJs(), 1000);
-
-        console.log('[App] Initialization complete.');
+        // --- 4. 共通処理関数 ---
         
-        // Window Controls
-        setupWindowControls();
+        // ファイル保存処理
+        const saveFile = async () => {
+            const pane = layoutManager.activePane;
+            if (pane && pane.activeFilePath) {
+                try {
+                    await window.electronAPI.saveFile(pane.activeFilePath, pane.editorView.state.doc.toString());
+                    State.fileModificationState.delete(pane.activeFilePath);
+                    pane.updateTabs();
+                    UI.showNotification('保存しました', 'success');
+                } catch (e) {
+                    UI.showNotification('保存に失敗しました', 'error');
+                }
+            }
+        };
 
-    } catch (e) {
-        console.error('[App] Init failed:', e);
-        showErrorOverlay(e.stack);
-    }
-});
+        // アクティブなエディタビューを取得するヘルパー
+        const getActiveView = () => layoutManager.activePane?.editorView;
 
-// --- Helper Functions ---
+        // --- 5. イベントリスナー設定 (ここが重要) ---
 
-async function loadSettings() {
-    try {
-        if(window.electronAPI) {
-            const settings = await window.electronAPI.loadAppSettings();
-            if (settings) Object.assign(state.appSettings, settings);
-        }
-    } catch (e) { console.warn('Failed to load settings', e); }
-}
+        // ▼ ツールバーボタン設定
+        const bindBtn = (id, action) => {
+            const btn = document.getElementById(id);
+            if (btn) btn.addEventListener('click', () => {
+                const view = getActiveView();
+                if (view) {
+                    action(view);
+                    view.focus();
+                }
+            });
+        };
 
-function applySettingsToUI() {
-    if (state.appSettings.theme === 'dark') {
-        document.body.setAttribute('data-theme', 'dark');
-    }
-    // Update inputs
-    const fontSizeInput = document.getElementById('font-size');
-    if (fontSizeInput) fontSizeInput.value = state.appSettings.fontSize;
-    // ... other settings mapping if needed
-    
-    if (layoutManager) layoutManager.updateAllPaneSettings();
-}
-
-function updateUIForActivePane(pane) {
-    const fileTitleInput = document.getElementById('file-title-input');
-    const fileTitleBar = document.getElementById('file-title-bar');
-    const stats = document.getElementById('file-stats');
-
-    if (pane && pane.activeFilePath) {
-        if (fileTitleBar) fileTitleBar.classList.remove('hidden');
-        if (fileTitleInput) {
-            const name = state.openedFiles.get(pane.activeFilePath)?.fileName || '';
-            // 拡張子を除去して表示
-            const extIndex = name.lastIndexOf('.');
-            fileTitleInput.value = extIndex > 0 ? name.substring(0, extIndex) : name;
-        }
-        updateFileStats(pane.editorView);
-        updateOutline(); // アウトライン更新
-    } else {
-        if (fileTitleBar) fileTitleBar.classList.add('hidden');
-        if (fileTitleInput) fileTitleInput.value = '';
-        if (stats) stats.textContent = '文字数: 0 | 行数: 0';
-        // Clear outline
-        const outlineTree = document.getElementById('outline-tree');
-        if(outlineTree) outlineTree.innerHTML = '';
-    }
-    
-    if (state.isPdfPreviewVisible && pane && pane.editorView) {
-        pdfPreview.generatePdfPreview(pane.editorView.state.doc.toString());
-    }
-}
-
-function updateFileStats(view) {
-    const stats = document.getElementById('file-stats');
-    if (!view || !stats) return;
-    const text = view.state.doc.toString();
-    stats.textContent = `文字数: ${text.length} | 行数: ${view.state.doc.lines}`;
-}
-
-function handleEditorInput(isDirty) {
-    const pane = layoutManager.activePane;
-    if (pane && pane.activeFilePath) {
-        if (isDirty) {
-            state.fileModificationState.set(pane.activeFilePath, true);
-            const fileData = state.openedFiles.get(pane.activeFilePath);
-            if (fileData) fileData.content = pane.editorView.state.doc.toString();
-            pane.updateTabs();
-        }
-        updateFileStats(pane.editorView);
-        
-        // Debounced updates
-        if (window.outlineUpdateTimeout) clearTimeout(window.outlineUpdateTimeout);
-        window.outlineUpdateTimeout = setTimeout(updateOutline, 500);
-
-        if (state.isPdfPreviewVisible) {
-            if (state.timeouts.pdfUpdate) clearTimeout(state.timeouts.pdfUpdate);
-            state.timeouts.pdfUpdate = setTimeout(() => {
-                pdfPreview.generatePdfPreview(pane.editorView.state.doc.toString());
-            }, 1000);
-        }
-    }
-}
-
-async function saveCurrentFile() {
-    const pane = layoutManager.activePane;
-    if (!pane || !pane.activeFilePath) return;
-    
-    const content = pane.editorView.state.doc.toString();
-    try {
-        await window.electronAPI.saveFile(pane.activeFilePath, content);
-        state.fileModificationState.delete(pane.activeFilePath);
-        pane.updateTabs();
-        uiComponents.showNotification('保存しました', 'success');
-    } catch(e) {
-        uiComponents.showNotification('保存失敗', 'error');
-    }
-}
-
-function openWelcomeFile() {
-    const readmePath = 'README.md';
-    if (!state.openedFiles.has(readmePath)) {
-        state.openedFiles.set(readmePath, {
-            content: '# Welcome to Markdown IDE\nStart typing...',
-            fileName: 'README.md'
+        // 保存 & PDF
+        document.getElementById('btn-save')?.addEventListener('click', saveFile);
+        document.getElementById('btn-export-pdf')?.addEventListener('click', () => {
+            // エクスポート処理（未実装なら通知だけ）
+            UI.showNotification('PDFエクスポート機能は準備中です'); 
         });
-    }
-    // 初期ペインがあれば開く
-    if (layoutManager.panes.size > 0) {
-        const firstPane = layoutManager.panes.values().next().value;
-        firstPane.openFile(readmePath);
-    }
-}
 
-function getActiveView() {
-    return layoutManager.activePane ? layoutManager.activePane.editorView : null;
-}
+        // Undo / Redo
+        bindBtn('toolbar-undo', EditorUtils.undo);
+        bindBtn('toolbar-redo', EditorUtils.redo);
 
-// --- Event Listeners Setup ---
+        // 書式
+        bindBtn('bold-btn', (v) => EditorUtils.toggleMark(v, '**'));
+        bindBtn('italic-btn', (v) => EditorUtils.toggleMark(v, '*'));
+        bindBtn('strike-btn', (v) => EditorUtils.toggleMark(v, '~~'));
+        bindBtn('highlight-btn', (v) => EditorUtils.toggleMark(v, '=='));
+        bindBtn('inline-code-btn', (v) => EditorUtils.toggleMark(v, '`'));
 
-function setupGlobalEventListeners() {
-    // Save
-    document.getElementById('btn-save')?.addEventListener('click', saveCurrentFile);
-    
-    // PDF Preview Toggle
-    document.getElementById('btn-pdf-preview')?.addEventListener('click', togglePdfPreview);
-
-    // Terminal Toggle
-    document.getElementById('btn-terminal-right')?.addEventListener('click', toggleTerminal);
-
-    // Zen Mode
-    document.getElementById('btn-zen')?.addEventListener('click', () => {
-        document.getElementById('ide-container').classList.toggle('zen-mode-active');
-    });
-
-    // Settings
-    document.getElementById('btn-settings')?.addEventListener('click', () => {
-        switchMainView('content-settings');
-    });
-}
-
-function togglePdfPreview() {
-    state.isPdfPreviewVisible = !state.isPdfPreviewVisible;
-    const rightPane = document.getElementById('right-pane');
-    
-    if (state.isPdfPreviewVisible) {
-        state.isTerminalVisible = false;
-        rightPane.classList.remove('hidden');
-        document.getElementById('pdf-preview-header').classList.remove('hidden');
-        document.getElementById('pdf-preview-container').classList.remove('hidden');
-        document.getElementById('terminal-header').classList.add('hidden');
-        document.getElementById('terminal-container').classList.add('hidden');
-        
-        const pane = layoutManager.activePane;
-        if(pane) pdfPreview.generatePdfPreview(pane.editorView.state.doc.toString());
-    } else {
-        rightPane.classList.add('hidden');
-    }
-    // UI更新（ボタンのactive状態など）はCSSやrenderer.jsのロジックに合わせるなら必要
-    document.getElementById('btn-pdf-preview')?.classList.toggle('active', state.isPdfPreviewVisible);
-    document.getElementById('btn-terminal-right')?.classList.toggle('active', false);
-}
-
-function toggleTerminal() {
-    state.isTerminalVisible = !state.isTerminalVisible;
-    state.isPdfPreviewVisible = false;
-    
-    const rightPane = document.getElementById('right-pane');
-    const termContainer = document.getElementById('terminal-container');
-    
-    if (state.isTerminalVisible) {
-        rightPane.classList.remove('hidden');
-        document.getElementById('terminal-header').classList.remove('hidden');
-        termContainer.classList.remove('hidden');
-        document.getElementById('pdf-preview-header').classList.add('hidden');
-        document.getElementById('pdf-preview-container').classList.add('hidden');
-        
-        if (terminalManager.terminals.size === 0) {
-            terminalManager.init().then(() => terminalManager.createSession());
-        }
-    } else {
-        rightPane.classList.add('hidden');
-    }
-    document.getElementById('btn-terminal-right')?.classList.toggle('active', state.isTerminalVisible);
-    document.getElementById('btn-pdf-preview')?.classList.toggle('active', false);
-}
-
-// --- Sidebar Switching ---
-function setupSidebarEvents() {
-    const btns = document.querySelectorAll('.side-switch');
-    btns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const targetId = btn.dataset.target;
-            switchSidebarTab(targetId);
+        // 見出し
+        bindBtn('btn-h2', (v) => EditorUtils.toggleLinePrefix(v, '##'));
+        bindBtn('btn-h3', (v) => EditorUtils.toggleLinePrefix(v, '###'));
+        // Hn ドロップダウン (簡易実装: クリックで動くようにする)
+        document.querySelectorAll('.dropdown-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const action = e.target.dataset.action; // "h1" 〜 "h6"
+                if (action) {
+                    const level = action.replace('h', '');
+                    const prefix = '#'.repeat(parseInt(level));
+                    const view = getActiveView();
+                    if(view) EditorUtils.toggleLinePrefix(view, prefix);
+                }
+            });
         });
-    });
 
-    document.getElementById('btn-toggle-leftpane')?.addEventListener('click', () => {
-        const leftPane = document.getElementById('left-pane');
-        const ideContainer = document.getElementById('ide-container');
-        const isHidden = leftPane.classList.contains('hidden');
-        
-        if (isHidden) {
-            leftPane.classList.remove('hidden');
-            ideContainer.classList.remove('left-pane-hidden');
-        } else {
-            leftPane.classList.add('hidden');
-            ideContainer.classList.add('left-pane-hidden');
-        }
-    });
-}
+        // 挿入系
+        bindBtn('link-btn', EditorUtils.insertLink);
+        bindBtn('image-btn', EditorUtils.insertImage);
+        bindBtn('btn-table', EditorUtils.insertTable);
+        bindBtn('code-btn', EditorUtils.insertCodeBlock);
+        bindBtn('quote-btn', (v) => EditorUtils.toggleLinePrefix(v, '>'));
+        bindBtn('hr-btn', EditorUtils.insertHorizontalRule);
+        bindBtn('btn-page-break', EditorUtils.insertPageBreak);
 
-function switchSidebarTab(targetId) {
-    // Buttons Active State
-    document.querySelectorAll('.side-switch').forEach(b => b.classList.remove('active'));
-    const activeBtn = document.querySelector(`.side-switch[data-target="${targetId}"]`);
-    if(activeBtn) activeBtn.classList.add('active');
+        // リスト系
+        bindBtn('btn-bullet-list', (v) => EditorUtils.toggleList(v, 'ul'));
+        bindBtn('btn-number-list', (v) => EditorUtils.toggleList(v, 'ol'));
+        bindBtn('btn-check-list', (v) => EditorUtils.toggleList(v, 'task'));
 
-    // Show Left Pane if hidden
-    const leftPane = document.getElementById('left-pane');
-    if(leftPane.classList.contains('hidden')) {
-        leftPane.classList.remove('hidden');
-        document.getElementById('ide-container').classList.remove('left-pane-hidden');
-    }
-
-    // Switch Content
-    document.querySelectorAll('.left-pane-content').forEach(c => c.classList.add('content-hidden'));
-    const targetContent = document.getElementById(`content-${targetId}`);
-    if(targetContent) targetContent.classList.remove('content-hidden');
-
-    // Switch Header Buttons
-    document.querySelectorAll('.header-buttons').forEach(h => h.classList.add('content-hidden'));
-    const targetHeader = document.getElementById(`header-buttons-${targetId}`);
-    if(targetHeader) targetHeader.classList.remove('content-hidden');
-
-    if(targetId === 'outline') updateOutline();
-}
-
-// --- Toolbar Events (Using EditorUtils) ---
-function setupToolbarEvents() {
-    // Undo/Redo
-    document.getElementById('toolbar-undo')?.addEventListener('click', () => {
-        const v = getActiveView();
-        if(v) { EditorUtils.undo(v); v.focus(); }
-    });
-    document.getElementById('toolbar-redo')?.addEventListener('click', () => {
-        const v = getActiveView();
-        if(v) { EditorUtils.redo(v); v.focus(); }
-    });
-
-    // Formatting
-    document.getElementById('bold-btn')?.addEventListener('click', () => EditorUtils.toggleMark(getActiveView(), "**"));
-    document.getElementById('italic-btn')?.addEventListener('click', () => EditorUtils.toggleMark(getActiveView(), "*"));
-    document.getElementById('strike-btn')?.addEventListener('click', () => EditorUtils.toggleMark(getActiveView(), "~~"));
-    document.getElementById('highlight-btn')?.addEventListener('click', () => EditorUtils.toggleMark(getActiveView(), "=="));
-    
-    // Headings
-    document.getElementById('btn-h2')?.addEventListener('click', () => EditorUtils.toggleLinePrefix(getActiveView(), "##"));
-    document.getElementById('btn-h3')?.addEventListener('click', () => EditorUtils.toggleLinePrefix(getActiveView(), "###"));
-    
-    // Inserts
-    document.getElementById('link-btn')?.addEventListener('click', () => EditorUtils.insertLink(getActiveView()));
-    document.getElementById('image-btn')?.addEventListener('click', () => EditorUtils.insertImage(getActiveView()));
-    document.getElementById('btn-table')?.addEventListener('click', () => EditorUtils.insertTable(getActiveView()));
-    document.getElementById('code-btn')?.addEventListener('click', () => EditorUtils.insertCodeBlock(getActiveView()));
-    document.getElementById('inline-code-btn')?.addEventListener('click', () => EditorUtils.toggleMark(getActiveView(), "`"));
-    document.getElementById('quote-btn')?.addEventListener('click', () => EditorUtils.toggleLinePrefix(getActiveView(), ">"));
-    document.getElementById('hr-btn')?.addEventListener('click', () => EditorUtils.insertHorizontalRule(getActiveView()));
-    document.getElementById('btn-page-break')?.addEventListener('click', () => EditorUtils.insertPageBreak(getActiveView()));
-
-    // Lists
-    document.getElementById('btn-bullet-list')?.addEventListener('click', () => EditorUtils.toggleList(getActiveView(), 'ul'));
-    document.getElementById('btn-number-list')?.addEventListener('click', () => EditorUtils.toggleList(getActiveView(), 'ol'));
-    document.getElementById('btn-check-list')?.addEventListener('click', () => EditorUtils.toggleList(getActiveView(), 'task'));
-
-    // Dropdowns
-    document.querySelectorAll('.dropdown-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-            const action = e.target.dataset.action;
-            if(action && action.startsWith('h')) {
-                const level = parseInt(action.replace('h', ''));
-                EditorUtils.toggleLinePrefix(getActiveView(), "#".repeat(level));
+        // ファイルを閉じる
+        document.getElementById('btn-close-file-toolbar')?.addEventListener('click', () => {
+            const pane = layoutManager.activePane;
+            if (pane && pane.activeFilePath) {
+                pane.closeFile(pane.activeFilePath);
             }
         });
-    });
-}
 
-// --- Outline Logic ---
-function setupOutlineEvents() {
-    document.getElementById('btn-outline-collapse')?.addEventListener('click', () => {
-        document.querySelectorAll('.outline-item').forEach(i => {
-            if(parseInt(i.dataset.level) > 1) i.classList.add('hidden-outline-item');
+        // ▼ サイドバー切り替え (ファイル / Git / アウトライン)
+        const setupSidebar = () => {
+            const btns = document.querySelectorAll('.side-switch');
+            btns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    // 全ボタン非アクティブ化
+                    btns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+
+                    // 全コンテンツ非表示
+                    document.querySelectorAll('.left-pane-content').forEach(c => c.classList.add('content-hidden'));
+                    document.querySelectorAll('.header-buttons').forEach(h => h.classList.add('content-hidden'));
+
+                    // 対象を表示
+                    const target = btn.dataset.target; // files, git, outline
+                    document.getElementById(`content-${target}`)?.classList.remove('content-hidden');
+                    document.getElementById(`header-buttons-${target}`)?.classList.remove('content-hidden');
+                    
+                    // 左ペイン自体が表示されていなければ表示する
+                    const leftPane = document.getElementById('left-pane');
+                    if (leftPane.classList.contains('hidden')) {
+                        leftPane.classList.remove('hidden');
+                        document.getElementById('ide-container').classList.remove('left-pane-hidden');
+                    }
+                });
+            });
+        };
+        setupSidebar();
+
+        // 左ペイン開閉ボタン
+        document.getElementById('btn-toggle-leftpane')?.addEventListener('click', () => {
+            const leftPane = document.getElementById('left-pane');
+            const container = document.getElementById('ide-container');
+            leftPane.classList.toggle('hidden');
+            container.classList.toggle('left-pane-hidden');
         });
-    });
-    document.getElementById('btn-outline-expand')?.addEventListener('click', () => {
-        document.querySelectorAll('.outline-item').forEach(i => i.classList.remove('hidden-outline-item'));
-    });
-}
 
-function updateOutline() {
-    const view = getActiveView();
-    const outlineTree = document.getElementById('outline-tree');
-    if (!outlineTree || !view) return;
+        // ▼ 右パネル (ターミナル / PDF) 切り替え
+        const toggleRightPanel = (mode) => { // mode: 'terminal' or 'pdf'
+            const rightPane = document.getElementById('right-pane');
+            const termContainer = document.getElementById('terminal-container');
+            const pdfContainer = document.getElementById('pdf-preview-container');
+            const termHeader = document.getElementById('terminal-header');
+            const pdfHeader = document.getElementById('pdf-preview-header');
 
-    const content = view.state.doc.toString();
-    const headers = [];
-    const lines = content.split('\n');
+            const isSameMode = (mode === 'terminal' && State.isTerminalVisible) || (mode === 'pdf' && State.isPdfPreviewVisible);
+            
+            // 既に開いているモードと同じボタンを押したら閉じる
+            if (isSameMode) {
+                rightPane.classList.add('hidden');
+                State.isTerminalVisible = false;
+                State.isPdfPreviewVisible = false;
+                return;
+            }
 
-    lines.forEach((line, index) => {
-        const match = line.match(/^(#{1,6})\s+(.*)/);
-        if (match) {
-            headers.push({
-                level: match[1].length,
-                text: match[2],
-                lineNumber: index
+            // 開く処理
+            rightPane.classList.remove('hidden');
+            
+            if (mode === 'terminal') {
+                State.isTerminalVisible = true;
+                State.isPdfPreviewVisible = false;
+                
+                termContainer.classList.remove('hidden');
+                termHeader.classList.remove('hidden');
+                pdfContainer.classList.add('hidden');
+                pdfHeader.classList.add('hidden');
+
+                if (terminalManager.terminals.size === 0) terminalManager.createSession();
+                
+            } else if (mode === 'pdf') {
+                State.isTerminalVisible = false;
+                State.isPdfPreviewVisible = true;
+
+                pdfContainer.classList.remove('hidden');
+                pdfHeader.classList.remove('hidden');
+                termContainer.classList.add('hidden');
+                termHeader.classList.add('hidden');
+
+                const pane = layoutManager.activePane;
+                if (pane) PdfPreview.generatePdfPreview(pane.editorView.state.doc.toString());
+            }
+        };
+
+        document.getElementById('btn-terminal-right')?.addEventListener('click', () => toggleRightPanel('terminal'));
+        document.getElementById('btn-pdf-preview')?.addEventListener('click', () => toggleRightPanel('pdf'));
+
+        // ▼ ウィンドウ制御ボタン
+        document.getElementById('btn-minimize')?.addEventListener('click', () => window.electronAPI.minimizeWindow());
+        document.getElementById('btn-maximize')?.addEventListener('click', () => window.electronAPI.maximizeWindow());
+        document.getElementById('btn-close')?.addEventListener('click', () => window.electronAPI.closeWindow());
+
+        // --- 6. 初期表示 ---
+        const readmePath = 'README.md';
+        if (!State.openedFiles.has(readmePath)) {
+            State.openedFiles.set(readmePath, { 
+                content: '# Welcome to Markdown IDE\n\nStart typing...', 
+                fileName: 'README.md' 
             });
         }
-    });
-
-    if (headers.length === 0) {
-        outlineTree.innerHTML = '<li style="color: #999; padding: 5px;">見出しがありません</li>';
-        return;
-    }
-
-    let html = '';
-    headers.forEach((header) => {
-        const paddingLeft = (header.level - 1) * 15 + 5;
-        const fontSize = Math.max(14 - (header.level - 1), 11);
-        html += `<li class="outline-item" data-line="${header.lineNumber}" data-level="${header.level}" style="padding-left: ${paddingLeft}px; font-size: ${fontSize}px;">
-            <span class="outline-text">${header.text}</span>
-        </li>`;
-    });
-
-    outlineTree.innerHTML = html;
-
-    outlineTree.querySelectorAll('.outline-item').forEach(item => {
-        item.addEventListener('click', () => {
-            const lineNum = parseInt(item.dataset.line);
-            const line = view.state.doc.line(lineNum + 1);
-            view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
-            view.focus();
-        });
-    });
-}
-
-// --- View Switching (Settings vs Editor) ---
-function switchMainView(targetId) {
-    document.getElementById('content-readme').classList.add('content-hidden');
-    document.getElementById('content-settings').classList.add('content-hidden');
-    document.getElementById(targetId).classList.remove('content-hidden');
-    
-    // Toggle Title Bar visibility
-    const fileTitleBar = document.getElementById('file-title-bar');
-    if (targetId === 'content-settings') {
-        if(fileTitleBar) fileTitleBar.classList.add('hidden');
-    } else {
-        const pane = layoutManager.activePane;
-        if (pane && pane.activeFilePath && fileTitleBar) {
-            fileTitleBar.classList.remove('hidden');
+        if (layoutManager.activePane) {
+            layoutManager.activePane.openFile(readmePath);
         }
-    }
-}
 
-// --- Window Controls ---
-function setupWindowControls() {
-    document.getElementById('btn-minimize')?.addEventListener('click', () => window.electronAPI.minimizeWindow());
-    document.getElementById('btn-maximize')?.addEventListener('click', () => window.electronAPI.maximizeWindow());
-    document.getElementById('btn-close')?.addEventListener('click', () => window.electronAPI.closeWindow());
-}
+        console.log('[App] Initialization complete.');
+
+    } catch (e) {
+        console.error('CRITICAL INITIALIZATION ERROR:', e);
+        if (window.onerror) window.onerror(e.message, 'app.js', 0, 0, e);
+    }
+});
