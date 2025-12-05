@@ -8,12 +8,23 @@
     const { syntaxHighlighting, defaultHighlightStyle, indentUnit } = require("@codemirror/language");
     const { oneDark } = require("@codemirror/theme-one-dark");
 
-    // プラグイン読み込み (安全策)
+    // プラグイン読み込み (パス解決の修正版)
     let livePreviewPlugin = [], tablePlugin = [];
     try {
-        livePreviewPlugin = require(path.join(__dirname, '../livePreviewPlugin.js')).livePreviewPlugin;
-        tablePlugin = require(path.join(__dirname, '../tablePlugin.js')).tablePlugin;
-    } catch (e) { console.warn('Plugin load skipped', e); }
+        // エラーログから __dirname がプロジェクトルートを指している可能性が高いため、
+        // まずルート直下として探してみる (../ を外す)
+        livePreviewPlugin = require(path.join(__dirname, 'livePreviewPlugin.js')).livePreviewPlugin;
+        tablePlugin = require(path.join(__dirname, 'tablePlugin.js')).tablePlugin;
+    } catch (e) {
+        // 上記で失敗した場合（__dirnameが modules フォルダ内だった場合）は親ディレクトリを探す
+        try {
+            livePreviewPlugin = require(path.join(__dirname, '../livePreviewPlugin.js')).livePreviewPlugin;
+            tablePlugin = require(path.join(__dirname, '../tablePlugin.js')).tablePlugin;
+        } catch (e2) {
+            console.error('Plugin load failed completely:', e2);
+            // エラーでもエディタ自体は起動するように空配列のまま進む
+        }
+    }
 
     window.App = window.App || {};
 
@@ -58,40 +69,48 @@
 
         initEditor() {
             const settings = window.App.State.appSettings;
+            
+            // 拡張機能の配列を構築
+            const extensions = [
+                themeCompartment.of(settings.theme === 'dark' ? oneDark : []),
+                EditorView.lineWrapping,
+                lineNumbers(),
+                history(),
+                keymap.of([
+                    ...defaultKeymap,
+                    ...historyKeymap,
+                    { key: "Mod-s", run: () => { if (this.callbacks.onSave) this.callbacks.onSave(); return true; } }
+                ]),
+                syntaxHighlighting(defaultHighlightStyle),
+                markdown({ base: markdownLanguage }),
+                EditorView.updateListener.of(update => {
+                    // 変更検知
+                    if (update.docChanged) {
+                        const isExternal = update.transactions.some(tr => tr.annotation(ExternalChange));
+                        if (this.callbacks.onEditorInput) this.callbacks.onEditorInput(!isExternal);
+                    }
+                    // フォーカス変更時
+                    if (update.focusChanged && update.view.hasFocus) {
+                        if (this.layoutManager.activePaneId !== this.id) {
+                            setTimeout(() => {
+                                this.layoutManager.setActivePane(this.id);
+                            }, 0);
+                        }
+                    }
+                })
+            ];
+
+            // プラグインが正常に読み込めていれば追加
+            if (livePreviewPlugin && livePreviewPlugin.length > 0) {
+                extensions.push(livePreviewPlugin);
+            }
+            if (tablePlugin && tablePlugin.length > 0) {
+                extensions.push(tablePlugin);
+            }
+
             const startState = EditorState.create({
                 doc: "",
-                extensions: [
-                    themeCompartment.of(settings.theme === 'dark' ? oneDark : []),
-                    EditorView.lineWrapping,
-                    lineNumbers(),
-                    history(),
-                    keymap.of([
-                        ...defaultKeymap,
-                        ...historyKeymap,
-                        { key: "Mod-s", run: () => { if (this.callbacks.onSave) this.callbacks.onSave(); return true; } }
-                    ]),
-                    syntaxHighlighting(defaultHighlightStyle),
-                    markdown({ base: markdownLanguage }),
-                    livePreviewPlugin,
-                    tablePlugin,
-                    EditorView.updateListener.of(update => {
-                        // 変更検知
-                        if (update.docChanged) {
-                            const isExternal = update.transactions.some(tr => tr.annotation(ExternalChange));
-                            if (this.callbacks.onEditorInput) this.callbacks.onEditorInput(!isExternal);
-                        }
-                        // ★無限ループ対策: フォーカス変更時
-                        if (update.focusChanged && update.view.hasFocus) {
-                            // 既にアクティブなら何もしない
-                            if (this.layoutManager.activePaneId !== this.id) {
-                                // setTimeoutでスタックを逃がしてループ回避
-                                setTimeout(() => {
-                                    this.layoutManager.setActivePane(this.id);
-                                }, 0);
-                            }
-                        }
-                    })
-                ]
+                extensions: extensions
             });
 
             this.editorView = new EditorView({
@@ -181,7 +200,6 @@
             this.editorView.dispatch({
                 effects: [
                     themeCompartment.reconfigure(settings.theme === 'dark' ? oneDark : []),
-                    // 他のスタイル再設定が必要ならここに追加
                 ]
             });
         }

@@ -9,19 +9,27 @@
         async loadPdfJs() {
             if (window.App.State.pdfjsLib) return window.App.State.pdfjsLib;
             try {
+                // パス解決の修正
+                // __dirnameがプロジェクトルートの場合と、modulesフォルダ内の場合の両方を考慮
+                let projectRoot = __dirname;
+                if (path.basename(projectRoot) === 'modules') {
+                    projectRoot = path.resolve(projectRoot, '..');
+                }
+
                 // node_modules の場所を絶対パスで指定
-                const projectRoot = path.resolve(__dirname, '..');
                 const pdfjsPath = path.join(projectRoot, 'node_modules', 'pdfjs-dist', 'build', 'pdf.min.mjs');
                 const workerPath = path.join(projectRoot, 'node_modules', 'pdfjs-dist', 'build', 'pdf.worker.min.mjs');
                 
-                // Windowsパス対策
+                // Windowsパス対策 (バックスラッシュをスラッシュに変換)
                 const pdfjsUrl = 'file:///' + pdfjsPath.replace(/\\/g, '/');
                 const workerUrl = 'file:///' + workerPath.replace(/\\/g, '/');
+
+                console.log('Loading PDF.js from:', pdfjsUrl);
 
                 const loadedLib = await import(pdfjsUrl);
                 loadedLib.GlobalWorkerOptions.workerSrc = workerUrl;
                 window.App.State.pdfjsLib = loadedLib;
-                console.log('PDF.js loaded');
+                console.log('PDF.js loaded successfully');
                 return loadedLib;
             } catch (e) {
                 console.error('PDF.js load failed:', e);
