@@ -1,18 +1,16 @@
 /**
  * editor/helpers.js
- * CodeMirrorのエディタ操作に関するヘルパー関数群。
- * リストの自動インデントやツールバーのアクション（太字、見出し等）を定義します。
+ * エディタ操作のヘルパー関数完全版
+ * リスト操作、ツールバー、ペースト処理（URLダイアログ）、ドロップ処理
  */
-
-import { indentMore, indentLess } from "@codemirror/commands";
-
-// リスト検出用正規表現
-const LIST_RE = /^(\s*)((- \[[ xX]\])|(?:[-*+]|\d+(?:-\d+)*\.))\s+/;
-const ORDERED_RE = /^(\s*)(\d+(?:-\d+)*)\.\s/;
+const { indentMore, indentLess } = require("@codemirror/commands");
+const { EditorView } = require("@codemirror/view");
 
 // ========== リスト操作ロジック ==========
 
-// 番号付きリストの番号をインクリメントする (例: "1-1" -> "1-2")
+const LIST_RE = /^(\s*)((- \[[ xX]\])|(?:[-*+]|\d+(?:-\d+)*\.))\s+/;
+const ORDERED_RE = /^(\s*)(\d+(?:-\d+)*)\.\s/;
+
 function incrementOrderedNumber(currentNum) {
     const parts = currentNum.split('-');
     const lastPart = parts.pop();
@@ -23,8 +21,7 @@ function incrementOrderedNumber(currentNum) {
     return currentNum;
 }
 
-// Enterキー押下時のリスト継続処理
-export const handleListNewline = (view) => {
+const handleListNewline = (view) => {
     const { state, dispatch } = view;
     const { from, to, empty } = state.selection.main;
     if (!empty) return false;
@@ -39,217 +36,252 @@ export const handleListNewline = (view) => {
     const indent = match[1];
     const marker = match[2];
 
-    // カーソルがマーカーの後ろにあるかチェック
     if (from < line.from + fullMatch.length) return false;
 
-    // 行が空（マーカーのみ）の場合はリスト終了
     if (text.trim().length === fullMatch.trim().length) {
-        console.log('[EditorHelper] Ending list (empty item)');
         dispatch({ changes: { from: line.from, to: line.to, insert: "" } });
         return true;
     }
 
     let nextMarker = marker;
-
-    // 次のマーカーを決定
     const orderedMatch = text.match(ORDERED_RE);
     if (orderedMatch) {
-        const currentNum = orderedMatch[2];
-        nextMarker = incrementOrderedNumber(currentNum) + ".";
+        nextMarker = incrementOrderedNumber(orderedMatch[2]) + ".";
     } else if (marker.startsWith("- [")) {
-        nextMarker = "- [ ]"; // チェックボックスは未チェック状態で継続
+        nextMarker = "- [ ]";
     }
 
     const insertText = `\n${indent}${nextMarker} `;
-    console.log(`[EditorHelper] Continuing list with marker: "${nextMarker}"`);
-    
     dispatch({ changes: { from: to, insert: insertText }, selection: { anchor: to + insertText.length } });
     return true;
 };
 
-// Tabキーによるインデント処理（サブリスト化）
-export const handleListIndent = (view) => {
+const handleListIndent = (view) => {
     const { state, dispatch } = view;
     const { from, empty } = state.selection.main;
-
-    if (!empty && state.selection.ranges.some(r => !r.empty)) {
-        return indentMore(view);
-    }
+    if (!empty) return indentMore(view);
 
     const line = state.doc.lineAt(from);
     const match = line.text.match(ORDERED_RE);
-
     if (match) {
-        console.log('[EditorHelper] Indenting ordered list item');
+        const currentIndent = match[1];
         const currentNum = match[2];
-        
-        // 前の行の番号を探してサブ番号を生成 (例: 1. -> 1-1.)
         let prevLineNumStr = "";
         if (line.number > 1) {
             const prevLine = state.doc.line(line.number - 1);
             const prevMatch = prevLine.text.match(ORDERED_RE);
-            if (prevMatch) {
-                prevLineNumStr = prevMatch[2];
-            }
+            if (prevMatch) prevLineNumStr = prevMatch[2];
         }
-
         const newNum = prevLineNumStr ? `${prevLineNumStr}-1` : `${currentNum}-1`;
-        const newMarker = `${newNum}.`;
-        const indentUnitText = "    "; // 4スペース
-
         const changes = [
-            { from: line.from, insert: indentUnitText },
-            { from: line.from + match[1].length, to: line.from + match[1].length + match[2].length + 1, insert: newMarker }
+            { from: line.from, insert: "    " },
+            { from: line.from + match[1].length, to: line.from + match[1].length + match[2].length + 1, insert: `${newNum}.` }
         ];
-
         dispatch({ changes });
         return true;
     }
-
     return indentMore(view);
 };
 
-// Shift-Tabキーによるデデント処理（親リストへ戻る）
-export const handleListDedent = (view) => {
+const handleListDedent = (view) => {
     const { state, dispatch } = view;
     const { from, empty } = state.selection.main;
-
-    if (!empty && state.selection.ranges.some(r => !r.empty)) {
-        return indentLess(view);
-    }
+    if (!empty) return indentLess(view);
 
     const line = state.doc.lineAt(from);
-    const text = line.text;
-    const match = text.match(ORDERED_RE);
-
+    const match = line.text.match(ORDERED_RE);
     if (match) {
-        console.log('[EditorHelper] Dedenting ordered list item');
         const currentIndent = match[1];
         if (currentIndent.length === 0) return indentLess(view);
 
         let targetIndentLen = Math.max(0, currentIndent.length - 4);
         let nextNum = "1";
-
-        // 前の行を遡って適切な番号を探す
         for (let i = line.number - 1; i >= 1; i--) {
             const prevLine = state.doc.line(i);
             const prevMatch = prevLine.text.match(ORDERED_RE);
-            if (prevMatch) {
-                const prevIndent = prevMatch[1];
-                if (prevIndent.length <= targetIndentLen) {
-                    nextNum = incrementOrderedNumber(prevMatch[2]);
-                    break;
-                }
+            if (prevMatch && prevMatch[1].length <= targetIndentLen) {
+                nextNum = incrementOrderedNumber(prevMatch[2]);
+                break;
             }
         }
-
-        const newMarker = `${nextNum}.`;
-        let deleteLen = 0;
-        if (text.startsWith("\t")) deleteLen = 1;
-        else if (text.startsWith("    ")) deleteLen = 4;
-        else if (text.startsWith(" ")) deleteLen = currentIndent.length;
-
-        if (deleteLen > 0) {
-            const changes = [
-                { from: line.from, to: line.from + deleteLen, insert: "" },
-                { from: line.from + match[1].length, to: line.from + match[1].length + match[2].length + 1, insert: newMarker }
-            ];
-            dispatch({ changes });
-            return true;
-        }
+        
+        let deleteLen = text.startsWith("\t") ? 1 : (text.startsWith("    ") ? 4 : currentIndent.length);
+        const changes = [
+            { from: line.from, to: line.from + deleteLen, insert: "" },
+            { from: line.from + match[1].length, to: line.from + match[1].length + match[2].length + 1, insert: `${nextNum}.` }
+        ];
+        dispatch({ changes });
+        return true;
     }
-
     return indentLess(view);
 };
 
+// ========== ペースト処理 (URL検出時のモーダル表示) ==========
+
+function showPasteOptionModal(url, view) {
+    const existingModal = document.querySelector('.modal-overlay');
+    if (existingModal) existingModal.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    content.style.width = '400px';
+
+    const message = document.createElement('div');
+    message.className = 'modal-message';
+    message.textContent = `URLが検出されました: ${url}\nどのように貼り付けますか？`;
+    message.style.whiteSpace = 'pre-wrap';
+    message.style.wordBreak = 'break-all';
+
+    const buttons = document.createElement('div');
+    buttons.className = 'modal-buttons';
+
+    const createBtn = (text, cls = 'modal-btn') => {
+        const btn = document.createElement('button');
+        btn.className = cls;
+        btn.textContent = text;
+        return btn;
+    };
+
+    const cancelBtn = createBtn('キャンセル');
+    const plainBtn = createBtn('通常のURL');
+    const linkBtn = createBtn('リンク');
+    const bookmarkBtn = createBtn('ブックマーク', 'modal-btn primary');
+
+    buttons.append(cancelBtn, plainBtn, linkBtn, bookmarkBtn);
+    content.append(message, buttons);
+    overlay.append(content);
+    document.body.appendChild(overlay);
+
+    const closeModal = () => {
+        overlay.remove();
+        if (view) view.focus();
+    };
+
+    cancelBtn.addEventListener('click', closeModal);
+
+    plainBtn.addEventListener('click', () => {
+        view.dispatch(view.state.replaceSelection(url));
+        closeModal();
+    });
+
+    linkBtn.addEventListener('click', async () => {
+        linkBtn.disabled = true;
+        linkBtn.textContent = '取得中...';
+        try {
+            let title = url;
+            if (window.electronAPI && window.electronAPI.fetchUrlTitle) {
+                title = await window.electronAPI.fetchUrlTitle(url);
+            }
+            view.dispatch(view.state.replaceSelection(`[${title}](${url})`));
+        } catch (e) {
+            view.dispatch(view.state.replaceSelection(`[${url}](${url})`));
+        }
+        closeModal();
+    });
+
+    bookmarkBtn.addEventListener('click', () => {
+        const state = view.state;
+        const doc = state.doc;
+        const selection = state.selection.main;
+        const hasNewlineBefore = selection.from === 0 || doc.sliceString(selection.from - 1, selection.from) === '\n';
+        const hasNewlineAfter = selection.to === doc.length || doc.sliceString(selection.to, selection.to + 1) === '\n';
+        
+        let insertText = `@card ${url}`;
+        if (!hasNewlineBefore) insertText = '\n' + insertText;
+        if (!hasNewlineAfter) insertText = insertText + '\n';
+
+        view.dispatch(view.state.replaceSelection(insertText));
+        closeModal();
+    });
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+}
+
+// CodeMirror用のイベントハンドラ
+const pasteHandler = EditorView.domEventHandlers({
+    paste(event, view) {
+        const text = event.clipboardData.getData("text/plain");
+        const urlRegex = /^(http|https):\/\/[^ "]+$/;
+        if (urlRegex.test(text)) {
+            event.preventDefault();
+            showPasteOptionModal(text, view);
+            return true;
+        }
+        return false;
+    }
+});
+
+const dropHandler = EditorView.domEventHandlers({
+    drop(event, view) {
+        const data = event.dataTransfer.getData('text/plain');
+        try {
+            const parsed = JSON.parse(data);
+            if (parsed && parsed.paneId && parsed.filePath) {
+                return true; // LayoutManagerに任せる
+            }
+        } catch (e) {}
+        return false;
+    }
+});
+
 // ========== ツールバーアクション ==========
 
-// 行頭のプレフィックス切り替え (#, >, - 等)
-export function toggleLinePrefix(view, prefix) {
+function toggleLinePrefix(view, prefix) {
     if (!view) return;
-    console.log(`[EditorHelper] Toggling prefix: "${prefix}"`);
-    
     const { state, dispatch } = view;
     const { from } = state.selection.main;
     const line = state.doc.lineAt(from);
     const match = line.text.match(/^\s*(#+\s*|>\s*)/);
 
     let changes;
-    let newCursorPos;
-
-    // 既に同じプレフィックスがあれば削除、なければ追加
     if (match && match[1].trim() === prefix.trim()) {
-        const matchLen = match[0].length;
-        changes = { from: line.from, to: line.from + matchLen, insert: "" };
-        newCursorPos = line.to - matchLen;
+        changes = { from: line.from, to: line.from + match[0].length, insert: "" };
     } else {
         const insertText = prefix.endsWith(' ') ? prefix : prefix + ' ';
-        if (match) {
-            // 別のプレフィックスがあれば置換
-            const matchLen = match[0].length;
-            changes = { from: line.from, to: line.from + matchLen, insert: insertText };
-            newCursorPos = line.to - matchLen + insertText.length;
-        } else {
-            // なければ挿入
-            changes = { from: line.from, to: line.from, insert: insertText };
-            newCursorPos = line.to + insertText.length;
-        }
+        changes = { from: line.from, to: line.from, insert: insertText };
     }
-
-    dispatch({
-        changes: changes,
-        selection: { anchor: newCursorPos, head: newCursorPos }
-    });
+    dispatch({ changes });
     view.focus();
 }
 
-// テキスト装飾の切り替え (**, *, ~~, ==)
-export function toggleMark(view, mark) {
+function toggleMark(view, mark) {
     if (!view) return;
-    console.log(`[EditorHelper] Toggling mark: "${mark}"`);
-    
     const { state, dispatch } = view;
     const { from, to, empty } = state.selection.main;
-    const selectedText = state.sliceDoc(from, to);
+    const text = state.sliceDoc(from, to);
     
-    // 選択範囲の前後に既にマークがあるかチェック
+    // 簡易トグルロジック（既に囲まれていれば解除、なければ追加）
     const extendedFrom = Math.max(0, from - mark.length);
     const extendedTo = Math.min(state.doc.length, to + mark.length);
-
-    if (extendedFrom >= 0 && extendedTo <= state.doc.length) {
-        const surroundingText = state.sliceDoc(extendedFrom, extendedTo);
-        if (surroundingText.startsWith(mark) && surroundingText.endsWith(mark)) {
-            // マークを削除
-            dispatch({
-                changes: { from: extendedFrom, to: extendedTo, insert: selectedText },
-                selection: { anchor: extendedFrom, head: extendedFrom + selectedText.length }
-            });
-            view.focus(); return;
-        }
+    const surrounding = state.sliceDoc(extendedFrom, extendedTo);
+    
+    if (surrounding === mark + text + mark) {
+         dispatch({
+            changes: { from: extendedFrom, to: extendedTo, insert: text },
+            selection: { anchor: extendedFrom, head: extendedFrom + text.length }
+        });
+    } else {
+        dispatch({
+            changes: { from, to, insert: `${mark}${text}${mark}` },
+            selection: empty 
+                ? { anchor: from + mark.length }
+                : { anchor: to + mark.length * 2 }
+        });
     }
-
-    // マークを追加
-    dispatch({
-        changes: { from: from, to: to, insert: `${mark}${selectedText}${mark}` },
-        selection: empty
-            ? { anchor: from + mark.length, head: from + mark.length } // カーソルをマークの間に
-            : { anchor: to + mark.length * 2, head: to + mark.length * 2 } // 選択範囲の後ろに
-    });
     view.focus();
 }
 
-// リスト形式の切り替え
-export function toggleList(view, type) {
+function toggleList(view, type) {
     if (!view) return;
-    console.log(`[EditorHelper] Toggling list type: ${type}`);
-    
     const { state, dispatch } = view;
     const { from, to } = state.selection.main;
     const startLine = state.doc.lineAt(from);
     const endLine = state.doc.lineAt(to);
     let changes = [];
-    let totalChangeLength = 0;
-
+    
     for (let i = startLine.number; i <= endLine.number; i++) {
         const line = state.doc.line(i);
         const text = line.text;
@@ -257,136 +289,75 @@ export function toggleList(view, type) {
         const orderedMatch = text.match(/^(\s*)(\d+(?:-\d+)*\. )\s*/);
         const checkMatch = text.match(/^(\s*)(- \[[ x]\] )\s*/);
 
-        let diff = 0;
-
+        // 簡易実装: 既存リストがあれば削除、なければ追加
+        // 厳密な切り替えロジックが必要ならここに実装を追加
         if (type === 'ul') {
-            if (bulletMatch) {
-                // 削除
-                const delLen = bulletMatch[0].length - bulletMatch[1].length;
-                changes.push({ from: line.from + bulletMatch[1].length, to: line.from + bulletMatch[0].length, insert: "" });
-                diff = -delLen;
-            } else {
-                // 追加
-                changes.push({ from: line.from, insert: "- " });
-                diff = 2;
-            }
+            if (bulletMatch) changes.push({ from: line.from + bulletMatch[1].length, to: line.from + bulletMatch[0].length, insert: "" });
+            else changes.push({ from: line.from, insert: "- " });
         } else if (type === 'ol') {
-            if (orderedMatch) {
-                const delLen = orderedMatch[0].length - orderedMatch[1].length;
-                changes.push({ from: line.from + orderedMatch[1].length, to: line.from + orderedMatch[0].length, insert: "" });
-                diff = -delLen;
-            } else {
-                changes.push({ from: line.from, insert: "1. " });
-                diff = 3;
-            }
+            if (orderedMatch) changes.push({ from: line.from + orderedMatch[1].length, to: line.from + orderedMatch[0].length, insert: "" });
+            else changes.push({ from: line.from, insert: "1. " });
         } else if (type === 'task') {
-            if (checkMatch) {
-                const delLen = checkMatch[0].length - checkMatch[1].length;
-                changes.push({ from: line.from + checkMatch[1].length, to: line.from + checkMatch[0].length, insert: "" });
-                diff = -delLen;
-            } else {
-                changes.push({ from: line.from, insert: "- [ ] " });
-                diff = 6;
-            }
+            if (checkMatch) changes.push({ from: line.from + checkMatch[1].length, to: line.from + checkMatch[0].length, insert: "" });
+            else changes.push({ from: line.from, insert: "- [ ] " });
         }
-        totalChangeLength += diff;
     }
+    dispatch({ changes });
+    view.focus();
+}
 
-    // 選択範囲の維持（簡易実装）
-    const newHead = endLine.to + totalChangeLength;
-
-    dispatch({
-        changes: changes,
-        selection: { anchor: newHead, head: newHead }
+// 挿入ヘルパー
+function insertTextAtCursor(view, text, cursorOffset = 0) {
+    const { from, to } = view.state.selection.main;
+    view.dispatch({
+        changes: { from, to, insert: text },
+        selection: { anchor: from + cursorOffset }
     });
     view.focus();
 }
 
-// 各種挿入関数
-export function insertLink(view) {
+function insertLink(view) {
     if (!view) return;
-    const { state, dispatch } = view;
+    const { state } = view;
     const { from, to } = state.selection.main;
-    const selectedText = state.sliceDoc(from, to);
-    const text = selectedText || "link";
-    dispatch({ changes: { from: from, to: to, insert: `[${text}](url)` }, selection: { anchor: from + text.length + 3, head: from + text.length + 6 } });
+    const text = state.sliceDoc(from, to) || "link";
+    view.dispatch({
+        changes: { from, to, insert: `[${text}](url)` },
+        selection: { anchor: from + text.length + 3, head: from + text.length + 6 }
+    });
     view.focus();
 }
 
-export function insertImage(view) {
+function insertImage(view) {
     if (!view) return;
-    const { state, dispatch } = view;
+    const { state } = view;
     const { from, to } = state.selection.main;
-    const selectedText = state.sliceDoc(from, to);
-    const text = selectedText || "Image";
-    dispatch({
-        changes: { from: from, to: to, insert: `![${text}](url)` },
-        selection: { anchor: from + 2 + text.length + 2, head: from + 2 + text.length + 5 }
+    const text = state.sliceDoc(from, to) || "Image";
+    view.dispatch({
+        changes: { from, to, insert: `![${text}](url)` },
+        selection: { anchor: from + 4 + text.length, head: from + 7 + text.length }
     });
     view.focus();
 }
 
-export function insertTable(view) {
-    if (!view) return;
-    const { state, dispatch } = view;
-    const { from, to } = state.selection.main;
+function insertTable(view) { if(view) insertTextAtCursor(view, "\n| Col 1 | Col 2 | Col 3 |\n| :--- | :--- | :--- |\n|  |  |  |\n|  |  |  |\n", 0); }
+function insertHorizontalRule(view) { if(view) insertTextAtCursor(view, "\n---\n"); }
+function insertPageBreak(view) { if(view) insertTextAtCursor(view, '\n<div class="page-break"></div>\n'); }
+function insertCodeBlock(view) { if(view) insertTextAtCursor(view, "\n```\n\n```\n", 5); }
 
-    const table =
-        `| Col 1 | Col 2 | Col 3 |
-| :--- | :--- | :--- |
-|  |  |  |
-|  |  |  |
-`;
-    const lineStart = state.doc.lineAt(from).from;
-    const needsNewline = from !== lineStart;
-    const insertText = (needsNewline ? "\n" : "") + table;
-
-    dispatch({
-        changes: { from: from, to: to, insert: insertText },
-        selection: { anchor: from + (needsNewline ? 1 : 0) + 2 }
-    });
-    view.focus();
-}
-
-export function insertCodeBlock(view) {
-    if (!view) return;
-    const { state, dispatch } = view;
-    const { from, to } = state.selection.main;
-    const selectedText = state.sliceDoc(from, to);
-    const text = selectedText || "";
-    const insert = `\`\`\`\n${text}\n\`\`\`\n`;
-
-    dispatch({
-        changes: { from: from, to: to, insert: insert },
-        selection: { anchor: from + 4, head: from + 4 }
-    });
-    view.focus();
-}
-
-export function insertHorizontalRule(view) {
-    if (!view) return;
-    const { state, dispatch } = view;
-    const { from } = state.selection.main;
-    const line = state.doc.lineAt(from);
-    const insert = `\n---\n`;
-    const newPos = line.to + insert.length;
-    dispatch({
-        changes: { from: line.to, insert: insert },
-        selection: { anchor: newPos, head: newPos }
-    });
-    view.focus();
-}
-
-export function insertPageBreak(view) {
-    if (!view) return;
-    const { state, dispatch } = view;
-    const { from } = state.selection.main;
-    const line = state.doc.lineAt(from);
-    const insert = `\n<div class="page-break"></div>\n`;
-    const newPos = line.to + insert.length;
-    dispatch({
-        changes: { from: line.to, insert: insert },
-        selection: { anchor: newPos, head: newPos }
-    });
-    view.focus();
-}
+module.exports = {
+    handleListNewline,
+    handleListIndent,
+    handleListDedent,
+    pasteHandler,
+    dropHandler,
+    toggleLinePrefix,
+    toggleMark,
+    toggleList,
+    insertLink,
+    insertImage,
+    insertTable,
+    insertHorizontalRule,
+    insertPageBreak,
+    insertCodeBlock
+};

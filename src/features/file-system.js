@@ -1,68 +1,57 @@
 /**
  * features/file-system.js
- * ファイルの読み込み、保存、ファイルツリーの操作を担当します。
+ * ファイル操作
  */
-import { openedFiles, fileModificationState } from "../state.js";
+const path = require('path');
+const { openedFiles, fileModificationState } = require("../state.js");
 
-// 現在のディレクトリパス
-let currentDirectoryPath = null;
-let currentSortOrder = 'asc';
-
-export async function openFile(filePath, fileName, layoutManager) {
-    console.log(`[FileSystem] Opening file: ${fileName} (${filePath})`);
-    
-    // パスの正規化などはここで行う（pathモジュールなどが使える環境前提）
-    
+async function openFile(filePath, fileName, layoutManager) {
+    console.log(`[FileSystem] Opening: ${filePath}`);
     try {
         let content = '';
         if (openedFiles.has(filePath)) {
             content = openedFiles.get(filePath).content;
         } else {
-            // Electron API経由で読み込み
             if (window.electronAPI?.loadFile) {
                 content = await window.electronAPI.loadFile(filePath);
             } else {
-                content = "(Unable to load file content)";
+                content = "Content load failed.";
             }
-            // キャッシュに保存
             openedFiles.set(filePath, { content, fileName });
         }
 
-        // アクティブなペインで開く
         if (layoutManager && layoutManager.activePane) {
             layoutManager.activePane.openFile(filePath);
         }
     } catch (e) {
-        console.error('[FileSystem] Error opening file:', e);
-        // エラー通知UIの呼び出しなど
+        console.error('Open error:', e);
     }
 }
 
-export async function saveCurrentFile(layoutManager) {
+async function saveCurrentFile(layoutManager) {
     const pane = layoutManager.activePane;
     if (!pane || !pane.activeFilePath) return;
 
-    console.log(`[FileSystem] Saving file: ${pane.activeFilePath}`);
     try {
         const content = pane.editorView.state.doc.toString();
-        
         if (window.electronAPI?.saveFile) {
             await window.electronAPI.saveFile(pane.activeFilePath, content);
             
-            // 状態更新
             const fileData = openedFiles.get(pane.activeFilePath);
             if (fileData) fileData.content = content;
-            fileModificationState.delete(pane.activeFilePath);
             
+            fileModificationState.delete(pane.activeFilePath);
             pane.updateTabs();
-            console.log('[FileSystem] File saved successfully');
+            console.log('Saved:', pane.activeFilePath);
         }
     } catch (e) {
-        console.error('[FileSystem] Save failed:', e);
+        console.error('Save error:', e);
     }
 }
 
-export async function initializeFileTree() {
-    console.log('[FileSystem] Initializing file tree...');
-    // ... (ファイルツリー構築ロジック) ...
+async function initializeFileTree() {
+    console.log('[FileSystem] Tree init (stub)');
+    // ツリー初期化ロジックは renderer.js の移植が必要ならここに書く
 }
+
+module.exports = { openFile, saveCurrentFile, initializeFileTree };

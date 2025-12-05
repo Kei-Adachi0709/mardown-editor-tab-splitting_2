@@ -1,78 +1,88 @@
 /**
  * renderer.js
- * アプリケーションのエントリーポイント。
- * 各モジュールを初期化し、イベントを紐付けます。
+ * エントリーポイント (CommonJS版)
  */
-import { LayoutManager } from "./layout/manager.js";
-import { loadSettings, fileModificationState, openedFiles } from "./state.js";
-import { openFile, saveCurrentFile, initializeFileTree } from "./features/file-system.js";
-import { initializeTerminal } from "./features/terminal.js";
+const { LayoutManager } = require("./layout/manager.js");
+const { loadSettings, openedFiles, fileModificationState } = require("./state.js");
+const { openFile, saveCurrentFile, initializeFileTree } = require("./features/file-system.js");
+const { toggleLinePrefix, toggleMark, insertLink, insertImage, insertTable, insertCodeBlock } = require("./editor/helpers.js");
 
-// レイアウトマネージャーのインスタンス
+// インスタンス作成
 const layoutManager = new LayoutManager('pane-root');
 
-// グローバルコールバック（Paneからの呼び出し用）
+// グローバル連携
+window.layoutManager = layoutManager;
+
+// エディタ入力時のコールバック
 window.onEditorInputGlobal = (paneId) => {
     const pane = layoutManager.panes.get(paneId);
     if (!pane) return;
 
-    // 変更フラグを立てる
     if (pane.activeFilePath) {
         fileModificationState.set(pane.activeFilePath, true);
         const fileData = openedFiles.get(pane.activeFilePath);
-        if (fileData) {
-            fileData.content = pane.editorView.state.doc.toString();
-        }
+        if (fileData) fileData.content = pane.editorView.state.doc.toString();
         pane.updateTabs();
     }
     
-    // アウトライン更新や統計情報の更新などをここにフック
+    // 統計更新
+    updateStats(pane);
 };
 
-// UI更新用コールバック
 window.updateUIForActivePane = (pane) => {
-    // ファイル名表示の更新や統計情報の更新
+    updateStats(pane);
+    
+    // ファイル名入力欄の更新
+    const titleInput = document.getElementById('file-title-input');
+    if (titleInput && pane.activeFilePath) {
+        const fileData = openedFiles.get(pane.activeFilePath);
+        titleInput.value = fileData ? fileData.fileName : "";
+    }
+};
+
+function updateStats(pane) {
     const statsEl = document.getElementById('file-stats');
     if (statsEl && pane.editorView) {
+        const chars = pane.editorView.state.doc.length;
         const lines = pane.editorView.state.doc.lines;
-        statsEl.textContent = `Lines: ${lines}`;
+        statsEl.textContent = `文字数: ${chars} | 行数: ${lines}`;
     }
-};
+}
 
-// 初期化処理
+// ボタンイベント設定ヘルパー
+function setupButton(id, callback) {
+    const btn = document.getElementById(id);
+    if (btn) btn.addEventListener('click', callback);
+}
+
 window.addEventListener('load', async () => {
-    console.log('[App] Starting Markdown IDE...');
+    console.log('[App] Starting...');
+    
+    await loadSettings();
+    layoutManager.init();
+    await initializeFileTree();
 
-    try {
-        // 1. 設定ロード
-        await loadSettings();
+    // ツールバーのイベントリスナー
+    setupButton('btn-save', () => saveCurrentFile(layoutManager));
+    
+    // 書式ボタン
+    setupButton('bold-btn', () => toggleMark(layoutManager.activePane?.editorView, "**"));
+    setupButton('italic-btn', () => toggleMark(layoutManager.activePane?.editorView, "*"));
+    setupButton('strike-btn', () => toggleMark(layoutManager.activePane?.editorView, "~~"));
+    setupButton('highlight-btn', () => toggleMark(layoutManager.activePane?.editorView, "=="));
+    
+    setupButton('link-btn', () => insertLink(layoutManager.activePane?.editorView));
+    setupButton('image-btn', () => insertImage(layoutManager.activePane?.editorView));
+    setupButton('btn-table', () => insertTable(layoutManager.activePane?.editorView));
+    setupButton('code-btn', () => insertCodeBlock(layoutManager.activePane?.editorView));
 
-        // 2. レイアウト初期化
-        layoutManager.init();
+    // キーボードショートカット
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            e.preventDefault();
+            saveCurrentFile(layoutManager);
+        }
+    });
 
-        // 3. ファイルツリー初期化
-        await initializeFileTree();
-
-        // 4. ターミナル初期化（必要であれば）
-        // initializeTerminal();
-
-        // 5. キーボードショートカット登録
-        document.addEventListener('keydown', (e) => {
-            // 保存 (Ctrl+S)
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                e.preventDefault();
-                saveCurrentFile(layoutManager);
-            }
-        });
-
-        // 6. 初期ファイル（READMEなど）を開く
-        // openFile('README.md', 'README.md', layoutManager);
-
-        console.log('[App] Initialization complete.');
-    } catch (e) {
-        console.error('[App] Critical initialization error:', e);
-    }
+    console.log('[App] Ready');
 });
-
-// デバッグ用にグローバル公開（必要に応じて）
-window.layoutManager = layoutManager;

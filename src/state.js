@@ -1,10 +1,10 @@
 /**
  * state.js
- * アプリケーション全体で共有する状態（設定、開いているファイルなど）を管理します。
+ * アプリケーション設定と状態管理
  */
 
-// アプリケーション設定の初期値
-export const appSettings = {
+// 設定の初期値
+const appSettings = {
     fontSize: '16px',
     fontFamily: '"Segoe UI", "Helvetica Neue", Arial, sans-serif',
     theme: 'light',
@@ -12,20 +12,13 @@ export const appSettings = {
 };
 
 // 開いているファイルの状態
-// Map<filePath, {content: string, fileName: string}>
-export const openedFiles = new Map();
+const openedFiles = new Map();
 
-// ファイルの変更状態（保存されていない変更があるか）
-export const fileModificationState = new Map();
+// ファイルの変更状態
+const fileModificationState = new Map();
 
-// PDFプレビューの状態
-export const pdfState = {
-    isVisible: false,
-    document: null
-};
-
-// 設定をロードする関数
-export async function loadSettings() {
+// 設定をロード
+async function loadSettings() {
     console.log('[State] Loading settings...');
     try {
         if (window.electronAPI && window.electronAPI.loadAppSettings) {
@@ -40,8 +33,8 @@ export async function loadSettings() {
     }
 }
 
-// 設定を保存する関数
-export async function saveSettings() {
+// 設定を保存
+async function saveSettings() {
     console.log('[State] Saving settings:', appSettings);
     try {
         if (window.electronAPI && window.electronAPI.saveAppSettings) {
@@ -51,3 +44,11 @@ export async function saveSettings() {
         console.error('[State] Failed to save settings:', e);
     }
 }
+
+module.exports = {
+    appSettings,
+    openedFiles,
+    fileModificationState,
+    loadSettings,
+    saveSettings
+};
