@@ -1,30 +1,26 @@
 /**
- * editor/config.js
- * CodeMirrorの設定 (CommonJS版)
+ * editor/config.js (ES Module)
  */
-const { EditorState, Prec, Compartment, Annotation } = require("@codemirror/state");
-const { EditorView, keymap, highlightActiveLine, lineNumbers } = require("@codemirror/view");
-const { defaultKeymap, history, historyKeymap, indentMore, indentLess } = require("@codemirror/commands");
-const { markdown, markdownLanguage } = require("@codemirror/lang-markdown");
-const { syntaxHighlighting, defaultHighlightStyle, LanguageDescription, indentUnit } = require("@codemirror/language");
-const { javascript } = require("@codemirror/lang-javascript");
-const { oneDark } = require("@codemirror/theme-one-dark");
+import { EditorState, Prec, Compartment, Annotation } from "@codemirror/state";
+import { EditorView, keymap, highlightActiveLine, lineNumbers } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { syntaxHighlighting, defaultHighlightStyle, LanguageDescription, indentUnit } from "@codemirror/language";
+import { javascript } from "@codemirror/lang-javascript";
+import { oneDark } from "@codemirror/theme-one-dark";
 
-const { appSettings } = require("../state.js");
-
-// ★ここで pasteHandler, dropHandler も読み込む
-const { 
+import { appSettings } from "../state.js";
+import { 
     handleListNewline, handleListIndent, handleListDedent, 
     pasteHandler, dropHandler 
-} = require("./helpers.js");
+} from "./helpers.js";
 
-const ExternalChange = Annotation.define();
-const themeCompartment = new Compartment();
-const editorStyleCompartment = new Compartment();
+export const ExternalChange = Annotation.define();
+export const themeCompartment = new Compartment();
+export const editorStyleCompartment = new Compartment();
 
 const codeLanguages = (info) => {
     const lang = String(info).trim().toLowerCase();
-    if (!lang) return null;
     if (['js', 'javascript', 'node'].includes(lang)) return LanguageDescription.of({ name: 'javascript', support: javascript() });
     return null;
 };
@@ -35,7 +31,7 @@ const obsidianLikeListKeymap = [
     { key: "Shift-Tab", run: handleListDedent }
 ];
 
-function createEditorState(initialContent = "", onUpdate) {
+export function createEditorState(initialContent = "", onUpdate) {
     const initialTheme = appSettings.theme === 'dark' ? oneDark : [];
     const initialStyle = EditorView.theme({
         ".cm-content": {
@@ -55,10 +51,8 @@ function createEditorState(initialContent = "", onUpdate) {
             editorStyleCompartment.of(initialStyle),
             indentUnit.of("    "),
             Prec.highest(keymap.of(obsidianLikeListKeymap)),
-            // ★ここに追加
             pasteHandler,
             dropHandler,
-            
             history(),
             keymap.of(defaultKeymap),
             keymap.of(historyKeymap),
@@ -73,11 +67,3 @@ function createEditorState(initialContent = "", onUpdate) {
         ]
     });
 }
-
-module.exports = {
-    ExternalChange,
-    themeCompartment,
-    editorStyleCompartment,
-    createEditorState,
-    oneDark
-};

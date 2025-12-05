@@ -1,14 +1,13 @@
 /**
- * layout/pane.js
- * 個別ペインの定義
+ * layout/pane.js (ES Module 完全版)
+ * 個別ペイン管理、CodeMirrorインスタンス、タブ管理
  */
-const { EditorView } = require("@codemirror/view");
-const { createEditorState, ExternalChange } = require("../editor/config.js");
-const { openedFiles, fileModificationState } = require("../state.js");
+import { EditorView } from "@codemirror/view";
+import { createEditorState, ExternalChange } from "../editor/config.js";
+import { openedFiles, fileModificationState } from "../state.js";
 
-class Pane {
+export class Pane {
     constructor(id, parentContainer, layoutManager) {
-        console.log(`[Pane] Creating pane: ${id}`);
         this.id = id;
         this.layoutManager = layoutManager;
         this.files = [];
@@ -19,9 +18,9 @@ class Pane {
         this.element.className = 'pane';
         this.element.dataset.id = id;
         this.element.style.flex = '1';
-
+        
         this.element.addEventListener('click', () => {
-            this.layoutManager.setActivePane(this.id);
+             this.layoutManager.setActivePane(this.id);
         });
 
         this.header = document.createElement('div');
@@ -37,7 +36,6 @@ class Pane {
         this.element.appendChild(this.body);
 
         parentContainer.appendChild(this.element);
-
         this.initEditor();
     }
 
@@ -45,11 +43,8 @@ class Pane {
         const state = createEditorState("", (update) => {
             if (update.docChanged) {
                 const isExternal = update.transactions.some(tr => tr.annotation(ExternalChange));
-                if (!isExternal) {
-                    // renderer.js で定義したグローバル関数を呼ぶ
-                    if (window.onEditorInputGlobal) {
-                        window.onEditorInputGlobal(this.id);
-                    }
+                if (!isExternal && window.onEditorInputGlobal) {
+                    window.onEditorInputGlobal(this.id);
                 }
             }
             if (update.focusChanged && update.view.hasFocus) {
@@ -64,9 +59,7 @@ class Pane {
     }
 
     openFile(filePath) {
-        if (!this.files.includes(filePath)) {
-            this.files.push(filePath);
-        }
+        if (!this.files.includes(filePath)) this.files.push(filePath);
         this.switchToFile(filePath);
     }
 
@@ -88,7 +81,6 @@ class Pane {
         this.tabsContainer.innerHTML = '';
         this.files.forEach(filePath => {
             const fileData = openedFiles.get(filePath);
-            // 簡易的にファイル名を取得（pathモジュールがない場合を考慮）
             const fileName = fileData ? fileData.fileName : filePath.split(/[/\\]/).pop();
             const isActive = filePath === this.activeFilePath;
             const isDirty = fileModificationState.has(filePath);
@@ -97,6 +89,24 @@ class Pane {
             tab.className = `editor-tab ${isActive ? 'active' : ''}`;
             tab.innerHTML = `<span class="tab-title">${fileName} ${isDirty ? '●' : ''}</span><span class="close-tab">×</span>`;
             
+            // ドラッグ可能にする
+            tab.draggable = true;
+            tab.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', JSON.stringify({
+                    paneId: this.id,
+                    filePath: filePath
+                }));
+                tab.classList.add('dragging');
+                this.layoutManager.setDragSource(this.id, filePath);
+            });
+            
+            tab.addEventListener('dragend', () => {
+                tab.classList.remove('dragging');
+                this.layoutManager.clearDragSource();
+                const overlay = document.getElementById('drop-overlay');
+                if(overlay) overlay.classList.add('hidden');
+            });
+
             tab.addEventListener('click', (e) => {
                 if (e.target.classList.contains('close-tab')) {
                     e.stopPropagation();
@@ -120,8 +130,7 @@ class Pane {
                     this.switchToFile(nextFile);
                 } else {
                     this.activeFilePath = null;
-                    // エディタをクリア
-                    if (this.editorView) {
+                    if(this.editorView) {
                         this.editorView.dispatch({
                             changes: { from: 0, to: this.editorView.state.doc.length, insert: "" },
                             annotations: ExternalChange.of(true)
@@ -136,11 +145,18 @@ class Pane {
             this.layoutManager.removePane(this.id);
         }
     }
+    
+    setEditorContent(content) {
+         if (this.editorView) {
+            this.editorView.dispatch({
+                changes: { from: 0, to: this.editorView.state.doc.length, insert: content },
+                annotations: ExternalChange.of(true)
+            });
+        }
+    }
 
     destroy() {
         if (this.editorView) this.editorView.destroy();
         this.element.remove();
     }
 }
-
-module.exports = { Pane };

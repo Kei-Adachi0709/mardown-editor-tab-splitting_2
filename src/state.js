@@ -1,24 +1,18 @@
 /**
- * state.js
- * アプリケーション設定と状態管理
+ * state.js (ES Module)
  */
 
-// 設定の初期値
-const appSettings = {
+export const appSettings = {
     fontSize: '16px',
     fontFamily: '"Segoe UI", "Helvetica Neue", Arial, sans-serif',
     theme: 'light',
     autoSave: true
 };
 
-// 開いているファイルの状態
-const openedFiles = new Map();
+export const openedFiles = new Map();
+export const fileModificationState = new Map();
 
-// ファイルの変更状態
-const fileModificationState = new Map();
-
-// 設定をロード
-async function loadSettings() {
+export async function loadSettings() {
     console.log('[State] Loading settings...');
     try {
         if (window.electronAPI && window.electronAPI.loadAppSettings) {
@@ -33,8 +27,7 @@ async function loadSettings() {
     }
 }
 
-// 設定を保存
-async function saveSettings() {
+export async function saveSettings() {
     console.log('[State] Saving settings:', appSettings);
     try {
         if (window.electronAPI && window.electronAPI.saveAppSettings) {
@@ -44,11 +37,3 @@ async function saveSettings() {
         console.error('[State] Failed to save settings:', e);
     }
 }
-
-module.exports = {
-    appSettings,
-    openedFiles,
-    fileModificationState,
-    loadSettings,
-    saveSettings
-};

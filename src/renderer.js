@@ -1,68 +1,58 @@
 /**
- * renderer.js
- * エントリーポイント (CommonJS版)
+ * renderer.js (ES Module Entry Point)
  */
-const { LayoutManager } = require("./layout/manager.js");
-const { loadSettings, openedFiles, fileModificationState } = require("./state.js");
-const { openFile, saveCurrentFile, initializeFileTree } = require("./features/file-system.js");
-const { toggleLinePrefix, toggleMark, insertLink, insertImage, insertTable, insertCodeBlock } = require("./editor/helpers.js");
+import { LayoutManager } from "./layout/manager.js";
+import { loadSettings, openedFiles, fileModificationState } from "./state.js";
+import { openFile, saveCurrentFile, initializeFileTree } from "./features/file-system.js";
+import { 
+    toggleLinePrefix, toggleMark, insertLink, insertImage, insertTable, insertCodeBlock 
+} from "./editor/helpers.js";
+import { initializeTerminal, createTerminalSession } from "./features/terminal.js";
+import { loadPdfJs, togglePdfPreview } from "./features/pdf-preview.js";
 
-// インスタンス作成
+// import { livePreviewPlugin } from "../livePreviewPlugin.js"; // 共通JS非対応のためコメントアウト
+// import { tablePlugin } from "../tablePlugin.js"; // 共通JS非対応のためコメントアウト
+
 const layoutManager = new LayoutManager('pane-root');
-
-// グローバル連携
 window.layoutManager = layoutManager;
 
-// エディタ入力時のコールバック
 window.onEditorInputGlobal = (paneId) => {
     const pane = layoutManager.panes.get(paneId);
     if (!pane) return;
-
     if (pane.activeFilePath) {
         fileModificationState.set(pane.activeFilePath, true);
-        const fileData = openedFiles.get(pane.activeFilePath);
-        if (fileData) fileData.content = pane.editorView.state.doc.toString();
+        openedFiles.get(pane.activeFilePath).content = pane.editorView.state.doc.toString();
         pane.updateTabs();
     }
-    
-    // 統計更新
     updateStats(pane);
 };
 
 window.updateUIForActivePane = (pane) => {
     updateStats(pane);
-    
-    // ファイル名入力欄の更新
     const titleInput = document.getElementById('file-title-input');
-    if (titleInput && pane.activeFilePath) {
-        const fileData = openedFiles.get(pane.activeFilePath);
-        titleInput.value = fileData ? fileData.fileName : "";
+    if (titleInput) {
+        titleInput.value = openedFiles.get(pane.activeFilePath)?.fileName || "";
     }
 };
 
 function updateStats(pane) {
     const statsEl = document.getElementById('file-stats');
     if (statsEl && pane.editorView) {
-        const chars = pane.editorView.state.doc.length;
-        const lines = pane.editorView.state.doc.lines;
-        statsEl.textContent = `文字数: ${chars} | 行数: ${lines}`;
+        statsEl.textContent = `文字数: ${pane.editorView.state.doc.length} | 行数: ${pane.editorView.state.doc.lines}`;
     }
 }
 
-// ボタンイベント設定ヘルパー
-function setupButton(id, callback) {
+function setupButton(id, cb) {
     const btn = document.getElementById(id);
-    if (btn) btn.addEventListener('click', callback);
+    if (btn) btn.addEventListener('click', cb);
 }
 
 window.addEventListener('load', async () => {
-    console.log('[App] Starting...');
-    
+    console.log('[App] Starting (ESM)...');
     await loadSettings();
     layoutManager.init();
     await initializeFileTree();
 
-    // ツールバーのイベントリスナー
     setupButton('btn-save', () => saveCurrentFile(layoutManager));
     
     // 書式ボタン
@@ -76,12 +66,20 @@ window.addEventListener('load', async () => {
     setupButton('btn-table', () => insertTable(layoutManager.activePane?.editorView));
     setupButton('code-btn', () => insertCodeBlock(layoutManager.activePane?.editorView));
 
-    // キーボードショートカット
-    document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-            e.preventDefault();
-            saveCurrentFile(layoutManager);
-        }
+    // ターミナル
+    setupButton('btn-terminal-right', () => {
+        initializeTerminal();
+        const container = document.getElementById('terminal-container');
+        if(container) container.classList.toggle('hidden');
+    });
+    setupButton('new-terminal-btn', () => createTerminalSession());
+
+    // PDF
+    setupButton('btn-pdf-preview', () => {
+        const pane = document.getElementById('pdf-preview-container');
+        const isHidden = pane.classList.contains('hidden');
+        pane.classList.toggle('hidden');
+        togglePdfPreview(isHidden);
     });
 
     console.log('[App] Ready');
